@@ -39,6 +39,7 @@ const ARGS = '{"file_path":"notes/demo.txt","old_string":"hello","new_string":"h
 /** The edit tool's own call view (a call-time diff derived from the arguments). */
 const callDiff = (over?: Partial<Extract<ToolCallView, { card: 'diff' }>>): ToolCallView => ({
   card: 'diff', title: 'Edit notes/demo.txt',
+  locations: [{ path: 'notes/demo.txt', line: 2 }],
   diffs: [{ path: 'notes/demo.txt', oldText: 'hello', newText: 'hello fixture' }], ...over,
 })
 
@@ -117,7 +118,7 @@ describe('diffCardModel', () => {
 
 describe('chat row diff body', () => {
   const ownerProps = (block: RunningToolCall | ToolResultNode): GenericToolCardProps => ({
-    callId: 'c1', toolName: 'edit', block, openFile: vi.fn(), t,
+    callId: 'c1', toolName: 'edit', block, openFile: vi.fn(async () => {}), t,
   })
 
   it('the expanded body is the applied diff, capped tighter than the panel', () => {
@@ -164,7 +165,7 @@ describe('FileMutationRow diff card', () => {
   })
 
   const rowProps = (block: RunningToolCall | ToolResultNode, toolName = 'edit'): FileMutationRowProps => ({
-    callId: 'c1', toolName, block, openFile: vi.fn(), cwd: '/w/app',
+    callId: 'c1', toolName, block, openFile: vi.fn(async () => {}), cwd: '/w/app',
     sessionId: SID, useSessions: bindSnapshotSelector(list()),
     t,
   } as unknown as FileMutationRowProps)
@@ -186,13 +187,13 @@ describe('FileMutationRow diff card', () => {
   })
 
   it('the summary is a path link that opens the tool path through the host', () => {
-    const openFile = vi.fn()
+    const openFile = vi.fn(async () => {})
     const view = render(<FileMutationRow {...{ ...rowProps(settled()), openFile }} />)
     // The path link rides the collapsed summary, so it opens without expanding.
     fireEvent.click(view.getByRole('button', { name: 'notes/demo.txt' }))
     // The row passes the tool's own path; the injected openFile resolves it
     // against the session cwd (apply.ts), so the row must not resolve twice.
-    expect(openFile).toHaveBeenCalledWith('notes/demo.txt')
+    expect(openFile).toHaveBeenCalledWith({ path: 'notes/demo.txt', line: 2 })
   })
 
   it('registers under write too, rendering a create as an added-only diff', () => {

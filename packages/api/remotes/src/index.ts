@@ -26,6 +26,7 @@ export type {
   ApiRemoteAgentOptions,
   ApiRemoteAgentResult,
   ApiRemoteLookupError,
+  ApiRemoteSetupFailure,
 } from './agent-lookup.ts'
 export { API_REMOTE_FORWARDED_EVENTS } from './remote-events.ts'
 export type { ApiRemoteForwardedEvent } from './types.ts'

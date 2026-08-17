@@ -17,7 +17,7 @@
 语义：
 
 - **拒绝是结果事实。** 如果一次失败运行的 stderr 包含所选后端自身的拒绝方言，即提供方在每次包装时加上的特征（bwrap 下的 EROFS 文本、Landlock 下的 EACCES、Seatbelt 下的 EPERM），则结果报告 `ShellRunResult.sandbox.denied: true`（从已收集的 stderr 尾部进行保守分类）。每次受限制运行还会携带执行时模式（`result.sandbox.mode`）与提供方强制执行完整性（`result.sandbox.enforcement`：`full`，或在较旧 Landlock ABI 上为 `partial`）。
-- **Runner 路径或 syscall 必须匹配。** 进程启动前，调用方拥有的 workdir 必须经独立验证可用，Node 必须报告 `ENOENT` 或 `EACCES`，并且错误必须符合以下一种形态：`error.path` 等于提供方返回的 `argv[0]`，同时 `syscall` 为 `'spawn'` 或精确的 `'spawn <runner>'`；或者 `error.path` 不存在，同时 `syscall` 为精确的 `'spawn <runner>'`。这样可以识别缺失的 runner、不可执行的 runner，或 shebang 解释器不可用的可执行脚本。没有精确错误路径的裸 `syscall: 'spawn'`、任何其他错误码、无效或不可用的 workdir、资源失败、无关 syscall 或无结构拒绝仍保留本地执行器的命令启动失败语义。前台执行会抛出 `SANDBOX_UNAVAILABLE` 并附带原始 spawn 错误详情，异步后台结算则会标记 `runnerFailed: true` 和 `denied: false`。如果 `SubprocessRuntime` 同步抛出同样能指明 runner 的 `ENOENT`／`EACCES` 形态，后台启动会抛出 `SANDBOX_UNAVAILABLE`；其他同步错误原样传播。进程启动后，先按整行精确匹配排除信息性行，随后规则的可选退出码检查和余下 stderr 中的一行致命诊断必须同时匹配。匹配结果优先于拒绝；前台执行会抛出 `SANDBOX_UNAVAILABLE` 并附带匹配到的致命行，已结算的后台进程则会标记 `process.sandbox.runnerFailed`，Bash 结果生成方通过通用 `job_output` 渲染它。无论走哪条路径，受限制的后台句柄都会保留自身的模式／强制执行事实，并释放每进程计数。
+- **Runner 路径或 syscall 必须匹配。** 进程启动前，调用方拥有的 workdir 必须经独立验证可用，Node 必须报告 `ENOENT` 或 `EACCES`，并且错误必须符合以下一种形态：`error.path` 等于提供方返回的 `argv[0]`，同时 `syscall` 为 `'spawn'` 或精确的 `'spawn <runner>'`；或者 `error.path` 不存在，同时 `syscall` 为精确的 `'spawn <runner>'`。这样可以识别缺失的 runner、不可执行的 runner，或 shebang 解释器不可用的可执行脚本。没有精确错误路径的裸 `syscall: 'spawn'`、任何其他错误码、无效或不可用的 workdir、资源失败、无关 syscall 或无结构拒绝仍保留本地执行器的命令启动失败语义。前台执行与后台 `start()` 都会等待 subprocess 发布：能指明 runner 的创建拒绝会附带原始 spawn 错误详情抛出 `SANDBOX_UNAVAILABLE`，且不会产生 `ShellProcess`；其他创建拒绝原样传播。进程启动后，先按整行精确匹配排除信息性行，随后规则的可选退出码检查和余下 stderr 中的一行致命诊断必须同时匹配。匹配结果优先于拒绝；前台执行会抛出 `SANDBOX_UNAVAILABLE` 并附带匹配到的致命行，已结算的后台进程则会标记 `process.sandbox.runnerFailed`，Bash 结果生成方通过通用 `job_output` 渲染它。无论走哪条路径，受限制的后台句柄都会保留自身的模式／强制执行事实，并释放每进程计数。
 - **部署回退，每次调用策略。** [`ctx.sandboxPolicy`](../../sandbox/sandbox-policy/) 为每次工具调用解析完整的 `SandboxExecutionPolicy`：调用会话提供自身的模式覆盖与不可变 cwd 根目录，部署配置则为无 agent（智能体）调用提供回退。已批准的升权只更改该策略的模式，会话根目录仍然附着其上。`resolve()` 把策略带入 spec，因此来自不同项目的重叠命令会在各自的根目录与模式下运行、分类和报告。能力事实 `ctx.shell.sandboxMode` 报告已配置的默认值，因此工具层只在装载该执行器时才公布升权；静态 bash 工具描述则单独负责拒绝与升权引导。
 - **只限制文件影响。** 设计上不限制网络与进程可见性：模式词汇不会声称覆盖后端未强制执行的范围。
 - 进程机制（spawn、进程组终止、输出收集／spill、后台句柄、凭证清理）继承自 [`dsh-bash-local`](../bash-local/)；runner 选择位于 [`dsh-sandbox-local`](../../sandbox/sandbox-local/)。
@@ -84,5 +84,5 @@
 
 - **限制只覆盖文件影响**：网络访问与进程可见性不变，因此这些模式不是通用安全沙箱。
 - **拒绝从失败命令的 stderr 推断**：后端特征使该推断可跨平台使用，但包含相同后端特征的应用错误可能被分类为拒绝，也可能遗漏未出现在保留尾部中的拒绝。
-- **异步观测到的后台 runner 失败没有即时错误通道**：它记录在已结算进程上，并在调用方使用 `job_output` 读取通用任务时呈现；`SubprocessRuntime` 同步抛出的错误包含 runner 路径时，则会使 `start()` 立即失败。
+- **进程发布后的 runner 失败没有即时错误通道**：它记录在已结算进程上，并在调用方使用 `job_output` 读取通用任务时呈现；能归因于 runner 的 subprocess 创建拒绝则会在发布 `ShellProcess` 前拒绝 `start()`。
 - **`danger-full-access` 有意绕过 `ctx.sandbox`**：它是显式无约束模式，不是更宽的沙箱 profile。

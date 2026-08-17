@@ -189,6 +189,27 @@
         "tests/**/*.tsx"
       ]
     },
+    "packages/client/ui-directory-picker-desktop": {
+      "entry": [
+        "tests/**/*.spec.tsx"
+      ],
+      "project": [
+        "src/**/*.ts",
+        "tests/**/*.tsx"
+      ]
+    },
+    "packages/client/ui-ide": {
+      "entry": [
+        "tests/**/*.spec.ts",
+        "tests/**/*.spec.tsx"
+      ],
+      "project": [
+        "src/**/*.ts",
+        "src/**/*.tsx",
+        "tests/**/*.ts",
+        "tests/**/*.tsx"
+      ]
+    },
     "packages/client/ui-deliverables": {
       "entry": [
         "tests/**/*.spec.tsx"
@@ -726,6 +747,30 @@
         "react-dom"
       ]
     },
+    "apps/desktop": {
+      "entry": [
+        "forge.config.ts",
+        "scripts/**/*.ts",
+        "src/guardian.ts",
+        "src/main.ts",
+        "src/preload.ts",
+        "src/sidecar.ts",
+        "tests/**/*.spec.{ts,tsx}"
+      ],
+      "project": [
+        "scripts/**/*.ts",
+        "src/**/*.{ts,tsx}",
+        "tests/**/*.{ts,tsx}"
+      ],
+      "ignoreDependencies": [
+        "@deepseek-ai/dsh-base",
+        "@deepseek-ai/dsh-desktop-app",
+        "@deepseek-ai/dsh-ide-app",
+        "@deepseek-ai/dsh-web-app",
+        "react",
+        "react-dom"
+      ]
+    },
     "apps/cli": {
       "entry": [
         "tests/**/*.spec.ts",
@@ -781,6 +826,55 @@
     "packages/bundle/web-app": {
       "ignoreDependencies": [
         "@deepseek-ai/.+"
+      ]
+    },
+    "packages/bundle/desktop-app": {
+      "ignoreDependencies": [
+        "@deepseek-ai/dsh-agent-presets",
+        "@deepseek-ai/dsh-agent-presets-desktop",
+        "@deepseek-ai/dsh-client-connection-desktop",
+        "@deepseek-ai/dsh-client-modules-desktop",
+        "@deepseek-ai/dsh-client-ui-directory-picker-desktop",
+        "@deepseek-ai/dsh-host-directory-picker-electron",
+        "@deepseek-ai/dsh-host-workspace-registration",
+        "@deepseek-ai/dsh-subprocess-guardian"
+      ]
+    },
+    "packages/bundle/ide-app": {
+      "ignoreDependencies": [
+        "@deepseek-ai/dsh-client-ui-ide",
+        "@deepseek-ai/dsh-host-workspace-files"
+      ]
+    },
+    "packages/client/connection-web": {
+      "ignoreDependencies": [
+        "@deepseek-ai/dsh-tools"
+      ]
+    },
+    "packages/host/workspace-files": {
+      "ignoreDependencies": [
+        "zod"
+      ]
+    },
+    "packages/host/workspace-registration": {
+      "ignoreDependencies": [
+        "zod"
+      ]
+    },
+    "packages/preset/agent-presets-desktop": {
+      "ignoreDependencies": [
+        "@deepseek-ai/dsh-agent-instructions",
+        "@deepseek-ai/dsh-persona",
+        "@deepseek-ai/dsh-skill-filesystem",
+        "@deepseek-ai/dsh-tool-ask-user",
+        "@deepseek-ai/dsh-tool-bash",
+        "@deepseek-ai/dsh-tool-fs",
+        "@deepseek-ai/dsh-tool-fs-search",
+        "@deepseek-ai/dsh-tool-jobs",
+        "@deepseek-ai/dsh-tool-pwsh",
+        "@deepseek-ai/dsh-tool-skill",
+        "@deepseek-ai/dsh-tool-str-replace-editor",
+        "@deepseek-ai/dsh-tool-todo"
       ]
     }
   }

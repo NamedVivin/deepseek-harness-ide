@@ -1,0 +1,43 @@
+.editor {
+  height: 100%;
+  min-height: 0;
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--ds-font-family-code);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.editor :global(.cm-editor) {
+  height: 100%;
+  background: transparent;
+}
+
+.editor :global(.cm-scroller) {
+  overflow: auto;
+  font-family: inherit;
+}
+
+.editor :global(.cm-gutters) {
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-tertiary);
+  border-right: 1px solid var(--dsw-alias-border-l1);
+}
+
+.editor :global(.cm-activeLine),
+.editor :global(.cm-activeLineGutter) {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.editor :global(.cm-focused) {
+  outline: none;
+}
+
+.editor :global(.cm-focused .cm-cursor) {
+  border-left-color: var(--dsw-alias-label-primary);
+}
+
+.editor :global(.cm-focused .cm-selectionBackground),
+.editor :global(.cm-selectionBackground) {
+  background: var(--dsw-alias-interactive-bg-active);
+}

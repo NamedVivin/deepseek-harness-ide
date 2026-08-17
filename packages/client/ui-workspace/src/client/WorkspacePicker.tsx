@@ -164,6 +164,10 @@ export function WorkspacePickFlow({
       setPickingFolder(true)
       void adoptDirectory(path).finally(() => { setPickingFolder(false) })
     },
+    onRegistered: (workspace) => {
+      setFlowOpen(false)
+      onPick(workspace.workspaceId)
+    },
     onCancel: () => { setFlowOpen(false) },
     onError: (message) => {
       setFlowOpen(false)

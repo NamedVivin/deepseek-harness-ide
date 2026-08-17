@@ -57,9 +57,9 @@ export function apply(ctx: ClientContext): void {
     forClosing(owner) {
       // Same claim test the turn-tail chain entry runs: no produced files,
       // no vocabulary — the two surfaces agree by construction.
-      const paths = selectProducedFiles(owner)
-      if (paths === null) return undefined
-      return producedFileMentions(paths, owner.openFile, path => t('produced.open', { name: path }))
+      const locations = selectProducedFiles(owner)
+      if (locations === null) return undefined
+      return producedFileMentions(locations, owner.openFile, path => t('produced.open', { name: path }))
     },
   }
   ctx.provide('chatFileMentions', mentions)

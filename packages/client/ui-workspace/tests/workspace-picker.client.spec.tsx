@@ -137,6 +137,16 @@ describe('WorkspacePicker', () => {
     expect(screen.queryByTestId('directory-flow')).toBeNull()
   })
 
+  it('selects a Host-registered Workspace without calling raw path adoption', () => {
+    const registered = workspace('registered', 'Registered')
+    const b = mount([workspace('alpha', 'Alpha')])
+    chooseAdd()
+    act(() => { b.probe.owner!.onRegistered(registered) })
+    expect(b.createWorkspace).not.toHaveBeenCalled()
+    expect(b.onPick).toHaveBeenCalledWith(registered.workspaceId)
+    expect(screen.queryByTestId('directory-flow')).toBeNull()
+  })
+
   it('raises the flow straight from the anchor gesture when adding is the only entry', () => {
     // Nothing to list and one action left: a one-row menu would offer no
     // choice, so the owner's open request lands in the flow itself.

@@ -7,7 +7,7 @@
 
 import { randomUUID } from 'node:crypto'
 import { createReadStream } from 'node:fs'
-import { chmod, link, lstat, mkdir, open, readFile, realpath, readdir, rename, rm, stat } from 'node:fs/promises'
+import { chmod, link, lstat, mkdir, open, opendir, readFile, realpath, readdir, rename, rm, stat } from 'node:fs/promises'
 import type { BigIntStats, Dirent, Stats } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import { TextDecoder } from 'node:util'
@@ -271,15 +271,7 @@ async function resolveListedChildTarget(parent: LocalTarget, name: string): Prom
   return { displayPath: join(parent.displayPath, name), targetKey: identity.targetKey }
 }
 
-/**
- * List direct children of a directory in stable name order. Each child includes
- * a resolved target plus stat metadata when still available; file contents are
- * never read.
- * @param target - the resolved directory to list; a missing or non-directory target throws.
- * @param signal - aborts the listing, checked between children (`FS_ABORTED`).
- * @returns one entry per direct child, sorted by name.
- */
-export async function listDirectory(target: LocalTarget, signal?: AbortSignal): Promise<LocalDirEntry[]> {
+async function requireListDirectory(target: LocalTarget, signal?: AbortSignal): Promise<void> {
   throwIfAborted(signal, 'list')
   let info: PathInfo | null
   try {
@@ -289,16 +281,13 @@ export async function listDirectory(target: LocalTarget, signal?: AbortSignal): 
   }
   if (!info) throw new FsError(`cannot list "${target.displayPath}": not found`, 'FS_NOT_FOUND')
   if (info.type !== 'directory') throw new FsError(`cannot list "${target.displayPath}": not a directory`, 'FS_NOT_DIRECTORY')
+}
 
-  let entries: Dirent[]
-  try {
-    entries = await readdir(target.targetKey, { withFileTypes: true, encoding: 'utf8' })
-  } catch (error: unknown) {
-    /* v8 ignore next -- requires permission/kernel failure from readdir after a successful directory stat. */
-    throw listingIoError(target.displayPath, error)
-  }
-  throwIfAborted(signal, 'list')
-
+async function resolveDirectoryEntries(
+  target: LocalTarget,
+  entries: Dirent[],
+  signal?: AbortSignal,
+): Promise<LocalDirEntry[]> {
   const result: LocalDirEntry[] = []
   for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
     throwIfAborted(signal, 'list')
@@ -318,6 +307,63 @@ export async function listDirectory(target: LocalTarget, signal?: AbortSignal): 
     throwIfAborted(signal, 'list')
   }
   return result
+}
+
+/**
+ * List direct children of a directory in stable name order. Each child includes
+ * a resolved target plus stat metadata when still available; file contents are
+ * never read.
+ * @param target - the resolved directory to list; a missing or non-directory target throws.
+ * @param signal - aborts the listing, checked between children (`FS_ABORTED`).
+ * @returns one entry per direct child, sorted by name.
+ */
+export async function listDirectory(target: LocalTarget, signal?: AbortSignal): Promise<LocalDirEntry[]> {
+  await requireListDirectory(target, signal)
+  let entries: Dirent[]
+  try {
+    entries = await readdir(target.targetKey, { withFileTypes: true, encoding: 'utf8' })
+  } catch (error: unknown) {
+    /* v8 ignore next -- requires permission/kernel failure from readdir after a successful directory stat. */
+    throw listingIoError(target.displayPath, error)
+  }
+  throwIfAborted(signal, 'list')
+  return resolveDirectoryEntries(target, entries, signal)
+}
+
+/**
+ * List a complete directory only when it fits the supplied entry limit. The
+ * scan uses one-entry `opendir` buffering and stops after `maxEntries + 1`, so
+ * an oversized directory fails with `FS_TOO_LARGE` without being materialized.
+ * @param target - the resolved directory to list; a missing or non-directory target throws.
+ * @param options - the inclusive complete-result entry limit.
+ * @param signal - aborts the listing, checked between children (`FS_ABORTED`).
+ * @returns every direct child, sorted by name, when the directory fits.
+ */
+export async function listDirectoryBounded(
+  target: LocalTarget,
+  options: { maxEntries: number },
+  signal?: AbortSignal,
+): Promise<LocalDirEntry[]> {
+  await requireListDirectory(target, signal)
+  const entries: Dirent[] = []
+  try {
+    const directory = await opendir(target.targetKey, { encoding: 'utf8', bufferSize: 1 })
+    for await (const entry of directory) {
+      throwIfAborted(signal, 'list')
+      entries.push(entry)
+      if (entries.length > options.maxEntries) {
+        throw new FsError(
+          `cannot list "${target.displayPath}": directory exceeds the ${options.maxEntries}-entry limit`,
+          'FS_TOO_LARGE',
+        )
+      }
+    }
+  } catch (error: unknown) {
+    /* v8 ignore next -- permission/kernel failures after preflight require a racing filesystem change. */
+    throw listingIoError(target.displayPath, error)
+  }
+  throwIfAborted(signal, 'list')
+  return resolveDirectoryEntries(target, entries, signal)
 }
 
 // --- Reading ---

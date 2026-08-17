@@ -6,6 +6,8 @@
     path: ./cordis.yml
     patches:
       - insert:
+          - id: subprocess-pty
+            name: '@deepseek-ai/dsh-subprocess-pty-local'
           - id: pty
             name: '@deepseek-ai/dsh-terminal'
           - id: terminal-bash

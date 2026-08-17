@@ -36,6 +36,9 @@
 - id: subprocess
   name: '@deepseek-ai/dsh-subprocess-local'
 
+- id: subprocess-pty
+  name: '@deepseek-ai/dsh-subprocess-pty-local'
+
 - id: bash
   name: '@deepseek-ai/dsh-bash-local'
   config:

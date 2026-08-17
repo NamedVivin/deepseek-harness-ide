@@ -49,18 +49,18 @@ describe('jobs-local through a real Loader composition', () => {
     expect(context.jobs).toBeInstanceOf(LocalJobRegistry)
     context.jobs.attachController('loader-test')
     let settle!: (outcome: { status: 'killed' }) => void
-    context.jobs.start({
+    await context.jobs.start({
       kind: 'bash',
       label: 'hold loader slot',
-      run: () => ({
+      run: async () => ({
         cancel: () => { settle({ status: 'killed' }) },
         done: new Promise((resolve) => { settle = resolve }),
       }),
     })
-    expect(() => context!.jobs.start({
+    await expect(context.jobs.start({
       kind: 'bash',
       label: 'blocked loader job',
-      run: () => ({ cancel: () => {}, done: Promise.resolve({ status: 'completed' }) }),
-    })).toThrow('(limit: 1)')
+      run: async () => ({ cancel: () => {}, done: Promise.resolve({ status: 'completed' }) }),
+    })).rejects.toThrow('(limit: 1)')
   })
 })

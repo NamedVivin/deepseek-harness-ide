@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "startupTimeoutMs": 30000,
+  "gracefulShutdownMs": 10000,
+  "forceShutdownMs": 5000,
+  "squirrelTimeoutMs": 30000,
+  "nativeProcessPollMs": 100,
+  "mirrorTimeoutMs": 5000,
+  "maxDesktopBodyBytes": 167772160,
+  "maxDesktopChunkBytes": 1048576,
+  "maxDesktopInflightBytes": 16777216
+}

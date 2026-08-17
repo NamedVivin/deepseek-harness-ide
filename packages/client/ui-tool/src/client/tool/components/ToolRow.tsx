@@ -13,8 +13,8 @@
 // message flow. Every card kind starts collapsed, so a run of tool calls stays
 // scannable; the details panel is the single-call full-height reading surface.
 // Expand state is component-local view state. File-tool summaries are path
-// links that open through the host (stopPropagation keeps the two gestures
-// independent); an error row's collapsed summary is the failure's first line in
+// links that offer presenter-owned locations to the Client opener
+// (stopPropagation keeps the two gestures independent); an error row's collapsed summary is the failure's first line in
 // the error color.
 
 import { useState, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react'
@@ -24,6 +24,7 @@ import {
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { WebBlockProps } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
+import type { FileLocation } from '@deepseek-ai/dsh-tools'
 import { CHAT_DIFF_MAX_LINES, type DiffCardModel } from '../models/diff-card-model.ts'
 import { CHAT_READ_MAX_LINES, type ReadCardModel } from '../models/read-card-model.ts'
 import { CHAT_SEARCH_MAX_LINES, type SearchCardModel } from '../models/search-card-model.ts'
@@ -88,12 +89,14 @@ export interface ToolRowProps {
   web?: WebBlockProps | null | undefined
   state: ToolRowState
   /**
-   * Filesystem path from tool args; when set with onOpenFile, the summary
-   * renders as a hover-underline link that opens the host default app.
+   * Filesystem path used for summary display. The corresponding presenter-owned
+   * location and opener are both required before the summary becomes a link.
    */
   filePath?: string | undefined
-  /** Open the path with the host OS default application (already cwd-resolved). */
-  onOpenFile?: ((path: string) => void) | undefined
+  /** Presenter-owned location corresponding to the path summary. */
+  fileLocation?: FileLocation | undefined
+  /** Offer the complete location to the Client opener chain. */
+  onOpenFile?: ((location: FileLocation) => Promise<void>) | undefined
   /**
    * Jump to this call in the trajectory view: a hover-revealed Inspect pill
    * over the expanded body. Absent = no affordance.
@@ -143,6 +146,7 @@ export function ToolRow({
   web,
   state,
   filePath,
+  fileLocation,
   onOpenFile,
   inspect,
 }: ToolRowProps) {
@@ -170,13 +174,16 @@ export function ToolRow({
   // the call args has nothing left to sit beside.
   const suffix = failureLine === null ? summarySuffix ?? null : null
   // The failure line is error prose, not the path: no open-file affordance.
-  const fileLink = filePath !== undefined && onOpenFile !== undefined && failureLine === null
+  const fileLink = filePath !== undefined && fileLocation !== undefined
+    && onOpenFile !== undefined && failureLine === null
   const toggleExpand = () => {
     setExpanded(v => !v)
   }
   const openFile = (event: MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation()
-    if (filePath !== undefined) onOpenFile?.(filePath)
+    if (fileLocation !== undefined && onOpenFile !== undefined) {
+      void onOpenFile(fileLocation).catch(() => {})
+    }
   }
   // Keep Enter/Space on the focused path link from bubbling to the row's
   // keydown handler, which would preventDefault() the key and toggle expand

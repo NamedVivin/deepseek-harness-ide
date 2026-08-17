@@ -1,0 +1,18 @@
+{
+  "extends": "../../tsconfig.base.client.json",
+  "compilerOptions": {
+    "rootDir": "src/renderer",
+    "outDir": "lib/client-types",
+    "jsx": "react-jsx",
+    "lib": ["ES2024", "DOM", "DOM.Iterable"]
+  },
+  "include": ["src/renderer"],
+  "references": [
+    { "path": "../../vendor/cosmokit" },
+    { "path": "../../vendor/cordis" },
+    { "path": "../../vendor/loader" },
+    { "path": "../../packages/client/modules" },
+    { "path": "../../packages/client/web" },
+    { "path": "../../packages/client/connection-desktop/tsconfig.client.json" }
+  ]
+}

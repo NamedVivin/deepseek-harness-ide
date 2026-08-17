@@ -3,7 +3,7 @@
 // feeds it the file's line-numbered, syntax-highlighted content as ToolRow's
 // `read` card material, so it renders through ReadBlock in the collapsed-by-
 // default expanded body — the same unified interaction every other card row
-// has. The summary path is an openable host link. A running read (no result
+// has. The summary path offers its presenter location to the Client opener. A running read (no result
 // yet) and a non-read result render the summary row alone: the read intent is
 // result-side only, so there is no running-state read card to draw.
 
@@ -21,8 +21,8 @@ type ReadRowProps = ToolCallViewProps & PropsLocale<'conversation'>
 
 /**
  * Read row: icon + Read · {path} in the shared ToolRow chrome, with the file's
- * read card as the row's collapsed-by-default card body. The summary path is an
- * openable host link when the row names a single file.
+ * read card as the row's collapsed-by-default card body. The summary path is
+ * openable when the presenter names a single file.
  */
 export function ReadRow({ toolName, block, cwd, openFile, inspect, t }: ReadRowProps) {
   const model = toolRowModel(toolName, block, cwd)
@@ -41,6 +41,7 @@ export function ReadRow({ toolName, block, cwd, openFile, inspect, t }: ReadRowP
       read={read}
       state={model.state}
       filePath={model.filePath}
+      fileLocation={model.fileLocation}
       onOpenFile={openFile}
       inspect={inspect}
     />

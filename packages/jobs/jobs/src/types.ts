@@ -40,8 +40,9 @@ export interface JobOutcome {
 
 /**
  * Producer declaration passed to {@link JobRegistry.start}. The runtime
- * preflights access and cleanup before invoking {@link run}; the producer owns
- * execution resources while the runtime owns identity and lifecycle state.
+ * reserves capacity and installs owner cleanup before awaiting {@link run};
+ * the producer owns execution resources while the runtime owns identity and
+ * lifecycle state.
  */
 export interface JobStart {
   /** Producer kind — also the id prefix (`bash`, `subagent`, …). */
@@ -61,11 +62,14 @@ export interface JobStart {
    */
   owner?: Agent
   /**
-   * Start the work after preflight and synchronously return its hooks. Called
-   * once; a throw leaves nothing registered, and the producer must clean up any
-   * partially started resources.
+   * Start the work after preflight and return its hooks only after its resources
+   * are ready. Called once. A rejection leaves nothing registered, and the
+   * producer must clean up any partially started resources. The signal aborts
+   * when owner or service teardown reaches an unpublished start.
+   * @param signal - cancellation of setup before registration commits.
+   * @returns control hooks for ready work.
    */
-  run(): JobHooks
+  run(signal: AbortSignal): Promise<JobHooks>
 }
 
 /** Hooks through which the runtime controls and observes producer work. */

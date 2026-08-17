@@ -11,7 +11,7 @@ import type { TerminalSendOperation } from '@deepseek-ai/dsh-terminal'
 import SandboxProvider from '@deepseek-ai/dsh-sandbox'
 import type { ConfinedArgv, SandboxPolicy } from '@deepseek-ai/dsh-sandbox'
 import SandboxPolicyService from '@deepseek-ai/dsh-sandbox-policy'
-import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
+import LocalSubprocessPtyRuntime from '@deepseek-ai/dsh-subprocess-pty-local'
 import * as ptyLocal from '@deepseek-ai/dsh-terminal-bash'
 
 const roots: string[] = []
@@ -58,7 +58,7 @@ async function harness(
   await ctx.plugin(TerminalSessionService)
   await ctx.plugin(PassthroughSandbox)
   await ctx.plugin(SandboxPolicyService, { mode, workspaceRoot: root })
-  await ctx.plugin(LocalSubprocessRuntime)
+  await ctx.plugin(LocalSubprocessPtyRuntime)
   const fiber = await ctx.plugin(ptyLocal, {
     pollIntervalMs: 10,
     exactProbeAfterMs: 20,

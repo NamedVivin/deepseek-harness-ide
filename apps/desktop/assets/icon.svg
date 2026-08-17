@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="DeepSeek Harness IDE">
+  <defs>
+    <linearGradient id="background" x1="128" y1="96" x2="896" y2="928" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#101a3a"/>
+      <stop offset="1" stop-color="#050814"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="230" y1="720" x2="820" y2="286" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#45d4ff"/>
+      <stop offset="1" stop-color="#7067ff"/>
+    </linearGradient>
+  </defs>
+  <rect x="64" y="64" width="896" height="896" rx="210" fill="url(#background)"/>
+  <path d="M238 332h548a54 54 0 0 1 54 54v338a54 54 0 0 1-54 54H238a54 54 0 0 1-54-54V386a54 54 0 0 1 54-54Z" fill="#0d1630" stroke="#354a82" stroke-width="24"/>
+  <path d="m318 474 100 81-100 81M706 474l-100 81 100 81" fill="none" stroke="url(#accent)" stroke-linecap="round" stroke-linejoin="round" stroke-width="46"/>
+  <path d="m556 438-88 234" fill="none" stroke="#edf8ff" stroke-linecap="round" stroke-width="38"/>
+  <circle cx="248" cy="402" r="14" fill="#ff6b7a"/>
+  <circle cx="292" cy="402" r="14" fill="#ffd166"/>
+  <circle cx="336" cy="402" r="14" fill="#45d4a2"/>
+</svg>

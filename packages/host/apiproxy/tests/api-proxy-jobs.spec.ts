@@ -35,7 +35,7 @@ function producer(label = 'sleep 60') {
   const spec = {
     kind: 'bash' as const,
     label,
-    run: () => ({
+    run: async () => ({
       cancel: () => {},
       done: new Promise<JobOutcome>((resolve) => { settle = resolve }),
       readOutput: () => { reads.count += 1; return 'stolen output' },
@@ -101,7 +101,7 @@ describe('session/jobs subscription baseline', () => {
 
   it('carries the live set for a session that already has tasks when the stream opens', async () => {
     const { ctx, session, agent } = await harness(true)
-    ctx.jobs.start({ ...producer('pnpm run build').spec, owner: agent })
+    await ctx.jobs.start({ ...producer('pnpm run build').spec, owner: agent })
     const abort = new AbortController()
     const stream = api(ctx).events.mux({ rpcId: RpcId('t-tasks-baseline'), payload: {} }, abort.signal)
     const [baseline] = await collect(stream, 1, abort)
@@ -128,7 +128,7 @@ describe('session/jobs change pushes', () => {
     const collected = collect(stream, 3, abort)
 
     const p = producer()
-    const id = ctx.jobs.start({ ...p.spec, owner: agent })
+    const id = await ctx.jobs.start({ ...p.spec, owner: agent })
     ctx.jobs.kill(id, agent, 'test')
     p.settle({ status: 'killed', detail: 'signal: SIGTERM' })
 
@@ -146,7 +146,7 @@ describe('session/jobs change pushes', () => {
     const abort = new AbortController()
     const stream = proxy.events.mux({ rpcId: RpcId('t-tasks-fields'), payload: {} }, abort.signal)
     const collected = collect(stream, 1, abort)
-    ctx.jobs.start({ ...producer().spec, owner: agent, outputLimitBytes: 1_024 })
+    await ctx.jobs.start({ ...producer().spec, owner: agent, outputLimitBytes: 1_024 })
 
     const [frame] = await collected
     const fields: readonly string[] = Object.keys(frame?.jobs[0] ?? {})
@@ -161,7 +161,7 @@ describe('session/jobs change pushes', () => {
     const stream = proxy.events.mux({ rpcId: RpcId('t-tasks-unowned'), payload: {} }, abort.signal)
     const collected = collect(stream, 2, abort)
 
-    ctx.jobs.start(producer('open to every caller').spec)
+    await ctx.jobs.start(producer('open to every caller').spec)
 
     const frames = await collected
     expect(new Set(frames.map(frame => frame.sessionId)).size).toBe(2)
@@ -183,7 +183,7 @@ describe('session/jobs change pushes', () => {
     const stream = proxy.events.mux({ rpcId: RpcId('t-tasks-cold'), payload: {} }, abort.signal)
     const collected = collect(stream, 1, abort)
 
-    ctx.jobs.start(producer().spec)
+    await ctx.jobs.start(producer().spec)
     await collected
     expect(loaded).toBe(false)
     expect(ctx.agents.get(coldId)).toBeUndefined()
@@ -222,7 +222,7 @@ describe('session/jobs never consumes model output', () => {
     const collected = collect(stream, 3, abort)
 
     const p = producer()
-    const id = ctx.jobs.start({ ...p.spec, owner: agent })
+    const id = await ctx.jobs.start({ ...p.spec, owner: agent })
     ctx.jobs.kill(id, agent, 'test')
     p.settle({ status: 'killed', detail: 'signal: SIGTERM' })
     await collected
@@ -233,7 +233,7 @@ describe('session/jobs never consumes model output', () => {
   it('reads nothing while minting the subscription baseline either', async () => {
     const { ctx, agent } = await harness(true)
     const p = producer()
-    ctx.jobs.start({ ...p.spec, owner: agent })
+    await ctx.jobs.start({ ...p.spec, owner: agent })
 
     const abort = new AbortController()
     const stream = api(ctx).events.mux({ rpcId: RpcId('t-tasks-no-read-baseline'), payload: {} }, abort.signal)
@@ -253,7 +253,7 @@ describe('session/jobs baseline for a session born after the stream opened', () 
 
     // One unowned task exists before the new session is created; the subscribe
     // frame clears the client mirror, so the baseline has to follow it.
-    ctx.jobs.start(producer('visible to every caller').spec)
+    await ctx.jobs.start(producer('visible to every caller').spec)
     const created = ctx.sessions.create()
 
     const frames = await collect(stream, 2, abort)

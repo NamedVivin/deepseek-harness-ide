@@ -11,10 +11,11 @@
 发现过程不做缓存：`list()` 与 `resolve()` 每次调用都重新读取各个根目录，因此进程运行期间新写的 preset 立即可见，被删除的 preset 也会在下一次读取时消失。发现过程同时负责 preset 的**健康**：组装文件缺失或不可加载（YAML 无法解析——用加载器自己的方言检查，含 `!!js`——或不是由具名插件行组成的列表）的目录会作为携带 `broken` 原因的行列出而不是被跳过，因为被跳过的目录仍在磁盘上占着它的 id，而各个界面却没有任何可删的东西。目录名不是可用 preset id（`[a-z0-9][a-z0-9-]*`）的目录才被直接跳过：复制永远不可能占用那种名字。
 
 - `ctx.agentPresets.defaultId: string` 调用方未指定时挂载的 preset id。
+- `ctx.agentPresets.registerAdmission(contribution): () => void` 为调用方所属的 Cordis effect 添加同步、可区分操作的准入策略。返回的精确 disposer 会移除此 contribution，并开启新的策略代际。
 - `ctx.agentPresets.list(): Promise<AgentPreset[]>` 当前各根目录提供的全部 preset；id 重复时靠前的根目录胜出；损坏的 preset 也在其中，各自携带原因。
 - `ctx.agentPresets.resolve(id?): Promise<AgentPreset>` 按 id 取一个 preset，缺省取 `defaultId`。没有任何根目录提供该 id 时抛错，并列出可用 id。损坏的 preset 照样解析——删除、读取与上报都需要这一行。
 - `ctx.agentPresets.mount(agentCtx, id?): Promise<AgentPreset>` 用一个 preset 组装一个 agent——确保其常驻挂载（并发去重）并把 agent 的 scope key 认父到它——返回该 preset 供调用方记录。对损坏的 preset 直接以发现时记下的原因拒绝，所以每种不可加载的形态都在加载器介入之前以同一方式失败。
-- `ctx.agentPresets.composeFrom(agentCtx, parentCtx): string | undefined` 让一个 agent 加入另一个 agent 已在运行的常驻组装，返回所加入的 preset id——父方未加入任何 preset 时返回 `undefined`，那是无 roster 的部署，不是错误。这是认父而非挂载，因此同步、且自身没有组装失败模式；调用方用错（上下文无 scope、agent 已加入过）仍会拒绝。
+- `ctx.agentPresets.composeFrom(agentCtx, parentCtx): string | undefined` 让一个 agent 加入另一个 agent 已在运行的常驻组装，返回所加入的 preset id——父方未加入任何 preset 时返回 `undefined`，那是无 roster 的部署，不是错误。这是认父而非挂载，因此仍为同步操作；准入策略拒绝、常驻代际由旧策略放行，以及上下文无 scope 或 agent 已加入过等调用错误都会被拒绝。
 - `ctx.agentPresets.composedPreset(agentCtx): string | undefined` 某个**活着的** agent 正在运行的 preset，从其 scope 链读取而不是从其会话读取——对于持久化 header 尚在构建中的 agent，这是唯一能拿到的答案。
 - `ctx.agentPresets.recompose(agentCtx, id): Promise<AgentPreset>` 把一个 agent 重链到另一个 preset 的常驻组装。仅在该 agent 尚无任何产出时合法——**由调用方负责该检查**；新挂载在链移动之前确保完成，失败时 agent 原封不动。与 `mount()` 一样拒绝损坏的 preset。
 - `ctx.agentPresets.standingKeyFor(id?): Promise<ScopeKey>` 没有 agent 的宿主读取方（冷读记录）解析 preset 注册所用的常驻 scope key；确保挂载而不启动任何 agent、会话或轮次。与 `mount()` 一样拒绝损坏的 preset。
@@ -25,6 +26,14 @@
 - `ctx.agentPresets.remove(id): Promise<void>` 删除一个本地创作的 preset；已加入的会话保留其常驻挂载。若用户默认值恰好指向刚删除的 preset 则一并清除：存一个尚不存在的默认值是刻意的，但本次删除的这个再也不会有人提供，留着会让所有未显式指定的新会话无法启动。
 
 `AgentPreset` 携带 `id`（目录名）、`trust`（`system` 或 `user`，取自它所在的根目录）、`path`（组装文件的绝对路径），以及——仅当该 preset 无法组装会话时——`broken`（一条人类可读的原因，名单界面原样展示）。
+
+### 准入策略
+
+没有准入 contribution 即为允许，从而保持无 roster、Web 与 headless 组装的既有行为。contribution 接收 `{ operation, presetId }`；`operation` 是 `resolve`、`mount`、`recompose`、`standingKeyFor` 或 `composeFrom`，返回 `undefined` 或拒绝信息 `{ code, reason, details? }`。首个拒绝会抛出 `PresetAdmissionError`；其稳定的 `metadata` 包含 `operation`、`presetId`、`code`、`reason` 与可选的 `details`，传输层或 UI 无需解析错误消息。
+
+`registerAdmission()` 通过调用方的 Cordis effect 记录 contribution。注册与释放都会轮换策略代际。每个获准的公开操作都携带不透明、仅可使用一次的证明，且只有 `mount`、`recompose` 或 `standingKeyFor` 的证明能被底层挂载认领。认领发生在插入 preset 子树之前，因此仅持有 `AgentPreset` 的调用方无法绕过策略，拒绝也不会注册 provider 或子树。`StandingMount` 保存的证明与其公开 `PresetMount` 记录中的证明是同一个值；判断真伪依赖运行时对象身份，而不是 TypeScript 结构断言。
+
+策略变化时，既有 agent 继续运行，其常驻子树不会被拆除；但该子树的证明不能再用于新操作。下一次类挂载操作会创建由当前 contribution 放行的新代际，`composeFrom()` 则拒绝把新子 agent 绑定到旧代际。这样既保留正在运行的对话，又不让旧挂载权限继续接纳 agent。
 
 ### 应在何处调用 `mount()`
 

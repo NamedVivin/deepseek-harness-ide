@@ -10,6 +10,9 @@
 - id: subprocess-e2b
   name: '@deepseek-ai/dsh-subprocess-e2b'
 
+- id: subprocess-pty-e2b
+  name: '@deepseek-ai/dsh-subprocess-pty-e2b'
+
 - id: bash
   name: '@deepseek-ai/dsh-bash-local'
   config:

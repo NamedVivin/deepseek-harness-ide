@@ -19,6 +19,9 @@ const ORDER_SECTIONS = ['dependencies', 'optionalDependencies'] as const
 /** The workspace root manifest, which is never a release member. */
 const WORKSPACE_ROOT_PACKAGE = '@deepseek-ai/dsh-root'
 
+/** Promotion earned only by a signed three-target native desktop smoke run. */
+export const DESKTOP_NATIVE_SMOKE_PROMOTION = 'desktop-native-smoke'
+
 /** One publishable package of a release family. */
 export interface ReleaseMember {
   /** Repository-relative package directory, for example `packages/core/session`. */
@@ -187,6 +190,14 @@ export abstract class ReleaseFamily {
   abstract validatePayload(member: ReleaseMember, files: readonly string[]): void
 
   /**
+   * Name of the external promotion a member needs before npm publication.
+   * Members without a gate publish in the ordinary family sequence.
+   * @param member - member being considered for publication.
+   * @returns promotion name, or `undefined` when ordinary family gates suffice.
+   */
+  abstract publicationGate(member: ReleaseMember): string | undefined
+
+  /**
    * The executable that proves this family's artifacts install and run, or
    * `undefined` for a family that publishes no executable.
    */
@@ -226,6 +237,11 @@ class DshFamily extends ReleaseFamily {
    */
   validatePayload(member: ReleaseMember, files: readonly string[]): void {
     validateTarballPayload(files, member.name)
+  }
+
+  /** @inheritdoc */
+  publicationGate(member: ReleaseMember): string | undefined {
+    return member.name === '@deepseek-ai/dsh-desktop' ? DESKTOP_NATIVE_SMOKE_PROMOTION : undefined
   }
 
   readonly installedEntry = { packageName: '@deepseek-ai/dsh', binPath: 'lib/bin.js' }
@@ -274,6 +290,11 @@ class VendorFamily extends ReleaseFamily {
     if (files.length === 0) throw new Error(`${member.name} packed an empty tarball`)
   }
 
+  /** @inheritdoc */
+  publicationGate(): string | undefined {
+    return undefined
+  }
+
   /** No installed-entry probe: these are libraries a consumer imports, with no executable. */
   readonly installedEntry = undefined
 }
@@ -295,6 +316,31 @@ export function releaseFamily(id: string): ReleaseFamily {
     throw new Error(`unknown release family ${id}; expected one of ${known}`)
   }
   return family
+}
+
+/**
+ * Parse and validate explicitly earned promotions for one release family.
+ * @param family - family whose members define the allowed gate names.
+ * @param members - complete family member set.
+ * @param raw - comma-separated promotion names from the credentialed workflow.
+ * @returns validated unique promotion names.
+ */
+export function releasePromotions(
+  family: ReleaseFamily,
+  members: readonly ReleaseMember[],
+  raw: string | undefined,
+): ReadonlySet<string> {
+  const names = (raw ?? '').split(',').map(name => name.trim()).filter(name => name !== '')
+  if (new Set(names).size !== names.length) throw new Error('release promotions contain a duplicate name')
+  const allowed = new Set(members.flatMap((member) => {
+    const gate = family.publicationGate(member)
+    return gate === undefined ? [] : [gate]
+  }))
+  const unknown = names.filter(name => !allowed.has(name))
+  if (unknown.length > 0) {
+    throw new Error(`release family ${family.id} does not recognize promotion(s): ${unknown.join(', ')}`)
+  }
+  return new Set(names)
 }
 
 /**

@@ -43,7 +43,11 @@ const toolResult = (seq: number, callId: string, name: string, args = '{"command
   kind: 'tool-result', seq, time: seq * 1_000, callId,
   call: { name, argsRaw: args },
   callTime: seq * 1_000 - 500,
-  content: [], isError: false, callView: null, resultView: null, subCalls: [],
+  content: [], isError: false,
+  callView: name === 'read'
+    ? { card: 'generic', title: 'Read src/a.ts', kind: 'read', locations: [{ path: 'src/a.ts', line: 5 }] }
+    : null,
+  resultView: null, subCalls: [],
 })
 
 /** Test-owned AppFrame role: declares and renders the resident conversation area. */

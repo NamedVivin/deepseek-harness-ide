@@ -1,6 +1,7 @@
 /** Tool UI slot declarations and their composed component props. */
 import type { PropsLocale, PropsRenderSlots, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ToolCallBlock } from '@deepseek-ai/dsh-client-runtime/client'
+import type { FileLocation } from '@deepseek-ai/dsh-tools'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 
@@ -34,8 +35,8 @@ export interface ToolCallOwnerProps {
   block: ToolCallBlock
   /** Session workspace root for relative summaries. */
   cwd?: string | undefined
-  /** Open a Tool argument path through the Host. */
-  openFile: (path: string) => void
+  /** Offer a presenter-owned location to the Client opener. */
+  openFile: (location: FileLocation) => Promise<void>
   /** Inspect this call in the trajectory view when available. */
   inspect?: (() => void) | undefined
 }

@@ -1,0 +1,20 @@
+{
+  "extends": "../../../tsconfig.base.client.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "lib/types",
+    "tsBuildInfoFile": "lib/tsconfig.client.tsbuildinfo"
+  },
+  "files": [
+    "src/client/desktop-api-client.ts",
+    "src/client/index.ts",
+    "src/protocol.ts"
+  ],
+  "references": [
+    { "path": "../../../vendor/cordis" },
+    { "path": "../../util/brand" },
+    { "path": "../connection/tsconfig.client.json" },
+    { "path": "../modules" },
+    { "path": "../../host/apiproxy" }
+  ]
+}

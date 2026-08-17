@@ -23,6 +23,7 @@ import * as tool from '../src/index.ts'
 import { SessionId } from '@deepseek-ai/dsh-session'
 
 const testToolSignal = new AbortController().signal
+const agentScopeFibers = new WeakMap<Agent, { dispose: () => Promise<void> }>()
 
 /**
  * Drives the REAL plugin body: mounts `dsh-tool-subagent` on a real
@@ -766,7 +767,15 @@ describe('dsh-tool-subagent background mode', () => {
       session: { id, header: { version: 0, id, createdAt: 0 } },
     } as unknown as Agent
     ctx.agents.register(agent)
+    agentScopeFibers.set(agent, scopeFiber)
     return agent
+  }
+
+  /** Dispose the agent lifecycle scope that owns its pending and published jobs. */
+  async function disposeAgentScope(agent: Agent): Promise<void> {
+    const fiber = agentScopeFibers.get(agent)
+    if (fiber === undefined) throw new Error(`missing scope fiber for agent "${agent.id}"`)
+    await fiber.dispose()
   }
 
   async function backgroundSetup(toolConfig: tool.Config, mockConfig: Partial<mock.Config> = {}) {
@@ -818,7 +827,7 @@ describe('dsh-tool-subagent background mode', () => {
     expect(prepareCalls).toBe(0)
   })
 
-  it('returns a job id immediately and the answer is collected through job_output', async () => {
+  it('returns a job id after provider readiness and collects the answer through job_output', async () => {
     const ctx = await backgroundSetup({ provider: 'mock', agentOptions: { model: 'child-model' } }, { reply: 'background answer' })
     const parent = ownerAgent(ctx, 'sess-parent')
 
@@ -869,7 +878,7 @@ describe('dsh-tool-subagent background mode', () => {
     expect(text(result)).toBe('Error: tool call aborted before dispatch')
   })
 
-  it('settles an asynchronous provider-start failure as a failed task', async () => {
+  it('rejects an asynchronous provider-start failure before publishing a task', async () => {
     const ctx = await backgroundSetup({ provider: 'mock' })
     const parent = ownerAgent(ctx, 'sess-parent')
     ctx.subagents.registerProvider({
@@ -887,52 +896,45 @@ describe('dsh-tool-subagent background mode', () => {
       arguments: { description: 'broken', prompt: 'p', run_in_background: true },
       agent: parent,
     })
-    expect(text(started)).toBe('started background subagent task subagent-1')
-    const output = await ctx.tools.execute({
-      signal: testToolSignal,
-      callId: CallId('broken-output'),
-      name: 'job_output',
-      arguments: { job_id: 'subagent-1', wait: true },
-      agent: parent,
-    })
-    expect(text(output)).toContain('[status: failed, Error: setup failed]')
+    expect(started.isError).toBe(true)
+    expect(text(started)).toBe('Error: setup failed')
+    expect(ctx.jobs.list(parent)).toEqual([])
   })
 
-  it('kills a subagent task while provider readiness is still pending', async () => {
+  it('cancels unpublished provider startup when the owner is disposed', async () => {
     const ctx = await backgroundSetup({ provider: 'mock' })
     const parent = ownerAgent(ctx, 'sess-parent')
+    const providerEntered = Promise.withResolvers<undefined>()
+    let abortReason: unknown
     ctx.subagents.registerProvider({
       name: 'pending-start',
       capabilities: { outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
       inheritsParentContext: false,
       start: request => new Promise((_resolve, reject) => {
-        request.signal.addEventListener('abort', () => { reject(new Error('startup aborted')) }, { once: true })
+        request.signal.addEventListener('abort', () => {
+          abortReason = request.signal.reason
+          reject(new Error('startup aborted'))
+        }, { once: true })
+        providerEntered.resolve(undefined)
       }),
     })
     tool.apply(ctx, { provider: 'pending-start', toolName: 'subagent_pending' })
 
-    await ctx.tools.execute({
+    const starting = ctx.tools.execute({
       signal: testToolSignal,
       callId: CallId('pending-start'),
       name: 'subagent_pending',
       arguments: { description: 'pending', prompt: 'p', run_in_background: true },
       agent: parent,
     })
-    await ctx.tools.execute({
-      signal: testToolSignal,
-      callId: CallId('pending-kill'),
-      name: 'job_kill',
-      arguments: { job_id: 'subagent-1', reason: 'no longer needed' },
-      agent: parent,
-    })
-    const output = await ctx.tools.execute({
-      signal: testToolSignal,
-      callId: CallId('pending-output'),
-      name: 'job_output',
-      arguments: { job_id: 'subagent-1', wait: true },
-      agent: parent,
-    })
-    expect(text(output)).toBe('(no new output)\n[status: killed]')
+    await providerEntered.promise
+    await disposeAgentScope(parent)
+
+    const result = await starting
+    expect(result.isError).toBe(true)
+    expect(text(result)).toBe('Error: startup aborted')
+    expect(abortReason).toBe('owner disposed')
+    expect(ctx.jobs.list(parent)).toEqual([])
   })
 
   it('forwards job_kill reasons through the run signal (and defaults one when absent)', async () => {

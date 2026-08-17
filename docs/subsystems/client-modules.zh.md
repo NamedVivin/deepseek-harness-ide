@@ -2,13 +2,13 @@
 
 [English](client-modules.md) | 中文
 
-Web 插件表：[dsh-client-modules](../../packages/client/modules) 中 client 模块系统的 Node 半，以 `ctx.clientModules`（`ClientModuleRegistry`）形式提供。它扫描宿主 Loader 的 entry，找出声明了 `dsh.client` 的包，组合出 `window.__DSH_BOOT__` entry 图，在 `/plugins/<id>/client.js` 提供各个 bundle，并经 index 转换（index tap）注入启动 manifest（元数据清单）——这是同一个服务的四个面。它是 Web GUI 栈的一项可选能力，不属于 agent loop（智能体循环）主干，并且是 [dsh-host-webserver](../../packages/host/webserver) 的消费方：[web-server.md](web-server.md) 所述的载体提供本服务注册的前缀路由与 index 转换。同一个包的浏览器半（`ctx.modules`，即拉取并物化这些 bundle 的 lazy CJS 模块表）属于内核机件，记录在[包 README](../../packages/client/modules/README.md)中，不在本页。
+[dsh-client-modules](../../packages/client/modules) 中载体中立的 Client 插件表，以 `ctx.clientModules`（`ClientModuleRegistry`）形式提供。它扫描声明了 `dsh.client` 的 Host Loader entry，为浏览器 bundle 计算哈希，并组合一份带 revision 的依赖图。必须且只能有一个 `ctx.clientModuleDelivery` provider 提供物理 URL 并在对应载体上安装该图：[dsh-client-modules-web](../../packages/client/modules-web) 负责 HTTP 路由与 index 注入，[dsh-client-modules-desktop](../../packages/client/modules-desktop) 则负责根据打包 manifest 解析不可变 `dsh-app://` URL。这项 GUI 能力是可选的，不属于 agent loop 主干。浏览器半（`ctx.modules`）仍是唯一代码 loader，记录在[包 README](../../packages/client/modules/README.md)中。
 
-源码：[`packages/client/modules/src/client/manifest.ts`](../../packages/client/modules/src/client/manifest.ts)
+源码：[`packages/client/modules/src/index.ts`](../../packages/client/modules/src/index.ts)
 
 ## wire
 
-图是 Node 半与浏览器半之间协议层的唯一真源：宿主从扫描到的包组合出 `WebBootEntry` 行，把图作为 `<head>` 中的第一个脚本注入（`window.__DSH_BOOT__`，其中 `<` 已转义，插件可控的字符串因此无法逃出 script 元素），壳则在启动任何东西之前先解析它。没有有效 manifest 的页面无法启动——浏览器侧的解析器在图缺失或畸形时大声抛错。
+图是 Host 半与 renderer 半之间协议层的唯一真源。Host 从扫描到的包组合出 `WebBootEntry` 行，再由选定的 delivery provider 分配各行 URL。Web 把图作为 `<head>` 中的第一个脚本注入（`window.__DSH_BOOT__`，并转义 `<`）；desktop 则在启动前通过闭合的 `desktop.bootManifest` IPC method 取得同一份图。renderer 缺少有效 manifest 时会在加载任何 Client bundle 前失败。
 
 ```ts type-equiv
 /**
@@ -42,7 +42,7 @@ interface WebBootGraph {
 }
 ```
 
-每一行的 `rev` 是该 bundle 的内容哈希，并作为使缓存失效的查询参数附在 URL 上；图的 `rev` 对组合后的各行做哈希，因此任何一行的变化都会改变它。`immediately` 标记第一阶段预取档位（在模块面启动期间 fetch 并执行，只做登记）；惰性行在首次 import 时才拉取。
+每一行的 `rev` 是该 bundle 的内容哈希，并附在载体 URL 上；图的 `rev` 对组合后的各行做哈希，因此任何一行的变化都会改变它。`immediately` 标记第一阶段预取档位（在模块面启动期间 fetch 并执行，只做登记）；惰性行在首次 import 时才拉取。
 
 ## 扫描
 
@@ -52,9 +52,9 @@ interface WebBootGraph {
 
 包元数据——包括「非 client 包」这一否定结论——按名缓存且永不过期：插件集合的变更在重启后生效。fiber 重启原样复用其行与 rev；bundle 内容变更只经 `rebuilt()` 到达图。
 
-## bundle 路由与 index 转换
+## 交付 provider
 
-`GET`/`HEAD /plugins/<id>/client.js` 以 `no-cache` 从磁盘提供已注册的 bundle（锚定一致性的是 rev 查询参数，而非 HTTP 缓存）；其他方法返回 405。未知 id——或已注册、但 bundle 因尚未构建而不可读的行——回应一个大声的 404，而不是让载体的 SPA 回退把 HTML 当作 JavaScript 发出。index 转换在每次 index 渲染时注入当前图，因此刷新页面总是针对实时组合启动。
+Web provider 以 `no-cache` 提供 `GET`/`HEAD /plugins/<id>/client.js`，拒绝其他 method，并在每次 index 渲染时注入当前图。desktop provider 生成 `dsh-app://plugins/<id>/client.js?rev=<rev>`，且只解析与当前图完全一致的 URL；Electron 随后再通过单独计算哈希的打包资源 manifest 映射该 URL。路径穿越、未知 id、过期 revision、不可读 bundle 与重复 delivery provider 都会大声失败。
 
 ## 服务
 
@@ -70,11 +70,43 @@ interface WebBootGraph {
 
 Generated from source by `scripts/gen-cordis-catalog.ts` (verified fresh by `pnpm run verify-cordis-catalog` in doc-sync; regenerate with `pnpm run gen-cordis-catalog`) — this section is byte-identical in both language sides of the page. Signature blocks use a `ts cordis-catalog` fence and keep the original source JSDoc; dispatch modes are defined in the [primer](../cordis-primer.md#dispatch-modes), and the framework-inherited `ctx` API lives in [cordis-api/inherited.md](../cordis-api/inherited.md).
 
+<a id="ctxclientmoduledelivery--clientmoduledelivery-abstract-seam"></a>
+
+### `ctx.clientModuleDelivery` — `ClientModuleDelivery` (abstract seam)
+
+Service Definition implemented by Web and desktop module-delivery providers.
+
+```ts cordis-catalog
+/**
+ * Produce the immutable URL advertised for one bundle revision.
+ * @param id - Client package id.
+ * @param revision - content revision.
+ * @returns carrier URL placed in the shared boot manifest.
+ */
+abstract bundleUrl(id: string, revision: string): string
+
+/**
+ * Attach physical delivery to the composed registry.
+ * @param host - read-only graph and bundle-path source.
+ * @returns disposer for routes, protocol mapping, or retained state.
+ */
+abstract install(host: ClientModuleDeliveryHost): () => void
+
+/**
+ * Resolve an exact advertised URL to a bundle path.
+ * @param url - untrusted physical asset URL.
+ * @returns the matched bundle path, or undefined when it is not currently advertised.
+ */
+abstract resolveBundleUrl(url: string): string | undefined
+```
+
+Source: [`packages/client/modules/src/delivery.ts:24`](../../packages/client/modules/src/delivery.ts)
+
 <a id="ctxclientmodules--clientmoduleregistry"></a>
 
 ### `ctx.clientModules` — `ClientModuleRegistry`
 
-The web plugin table service: incremental `dsh.client` scan + wire composition + bundle route + index tap. Construction runs the activation scan synchronously — a malformed declaration or missing bundle among the already-loaded entries aggregates into one loud throw (FAILED fiber; the boot activation audit reports it).
+Incremental `dsh.client` scan and carrier-neutral wire composition. Construction runs the activation scan synchronously — a malformed declaration or missing bundle among the already-loaded entries aggregates into one loud throw (FAILED fiber; the boot activation audit reports it).
 
 ```ts cordis-catalog
 /**
@@ -114,5 +146,49 @@ onRebuilt(listener: (id: string, rev: string) => void): () => void
 onGraphChanged(listener: () => void): () => void
 ```
 
-Source: [`packages/client/modules/src/index.ts:184`](../../packages/client/modules/src/index.ts)
+Source: [`packages/client/modules/src/index.ts:170`](../../packages/client/modules/src/index.ts)
+
+<a id="ctxconnection--hostconnectionhandle"></a>
+
+### `ctx.connection` — `HostConnectionHandle`
+
+Host `ctx.connection` shape consumed by transport-independent adapters.
+
+Source: [`packages/client/connection/src/rpc.ts:56`](../../packages/client/connection/src/rpc.ts)
+
+<a id="ctxconnectiontransport--hostconnectiontransport-abstract-seam"></a>
+
+### `ctx.connectionTransport` — `HostConnectionTransport` (abstract seam)
+
+Service Definition implemented by the Web and desktop Connection providers.
+
+```ts cordis-catalog
+/**
+ * Attach physical routes or IPC handlers to the core router.
+ * @param host - carrier-neutral request and event owner.
+ * @returns disposer that reaches transport quiescence.
+ */
+abstract install(host: HostConnectionTransportHost): () => void | Promise<void>
+```
+
+Source: [`packages/client/connection/src/transport.ts:67`](../../packages/client/connection/src/transport.ts)
+
+<a id="ctxdesktophostbridge--desktophostbridge"></a>
+
+### `ctx.desktopHostBridge` — `DesktopHostBridge`
+
+Sidecar-to-Electron main capability service with a closed method map.
+
+```ts cordis-catalog
+/**
+ * Invoke one Electron-main capability.
+ * @param method - closed Host-initiated method name.
+ * @param payload - method-derived request payload.
+ * @param signal - optional caller cancellation propagated to main.
+ * @returns method-derived response after IPC validation.
+ */
+request<K extends keyof HostInitiatedMethodMap>( method: K, payload: HostInitiatedRequest<K>, signal?: AbortSignal, ): Promise<HostInitiatedResponse<K>>
+```
+
+Source: [`packages/client/connection-desktop/src/index.ts:161`](../../packages/client/connection-desktop/src/index.ts)
 <!-- END GENERATED cordis-surface -->

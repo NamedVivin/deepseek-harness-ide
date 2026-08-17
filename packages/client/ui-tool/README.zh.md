@@ -8,13 +8,13 @@ Client 工具展示插件。`ui-conversation` 通过 `conversation.chat.node` �
 
 ## 渲染约定
 
-`ToolCallTree` 接收一个已经包含递归 `subCalls` 的 root `ToolCallBlock`、selection 状态、会话 `cwd`，以及用于打开文件和检查调用的 Host 回调。它递归遍历标准调用块，让 root 与任意深度的 child 经过同一条原子分发路径，不订阅独立的 parent-to-children map。
+`ToolCallTree` 接收一个已经包含递归 `subCalls` 的 root `ToolCallBlock`、selection 状态、会话 `cwd`、异步 Client 文件打开器，以及调用检查回调。它递归遍历标准调用块，让 root 与任意深度的 child 经过同一条原子分发路径，不订阅独立的 parent-to-children map。
 
 每个 root 和 child 包装层都保留 `data-chat-anchor-key="call:<id>"` 与 `data-chat-call-id` DOM 约定，供分页和 selection 使用。
 
 本包还通过 `ToolDetails` 填充 `conversation.details.tool`。行 renderer 与详情 renderer 共用同一组面向 `terminal`、`read`、`diff`、`search` 和 `web` render intent 的纯 card model。未知的 intent 标签和格式错误的 wire card 数据都会回退为压平的工具结果文本。
 
-通用行把已知工具名称归类为 search、read、shell、write、edit、code 或 generic 变体。运行中、成功、失败和中断状态只来自冻结的 call/result slice。只有用户调用 Host 打开文件回调时，文件路径才相对会话 `cwd` 解析；展示代码不读取会话服务。
+通用行把已知工具名称归类为 search、read、shell、write、edit、code 或 generic 变体。运行中、成功、失败和中断状态只来自冻结的 call/result slice。只有工具 presenter 提供了对应的 `FileLocation`，路径摘要才可打开；点击时会原样转发完整 `{ path, line? }` 值，不解析路径也不丢弃字段。展示代码不读取会话服务。
 
 ## 原子工具视图
 
@@ -28,7 +28,7 @@ ctx.slots.inject('tool.call.toolview', () =>
   }, BusinessToolRow))
 ```
 
-owner 载荷为 `ToolCallOwnerProps`：`callId`、`toolName`、冻结的 `block`、可选 `cwd`，以及普通的 `openFile`、`inspect` 回调。注册项会收到常规的会话 slot 运行时共享数据，但不会收到 React node、运行时服务或 root/subcall 知识。
+owner 载荷为 `ToolCallOwnerProps`：`callId`、`toolName`、冻结的 `block`、可选 `cwd`、异步 `openFile(FileLocation)` 操作，以及普通的 `inspect` 回调。注册项会收到常规的会话 slot 运行时共享数据，但不会收到 React node、运行时服务或 root/subcall 知识。
 
 本包当前拥有 generic fallback，以及 shell/pwsh、read、write/edit、grep/glob、web、todo、question 和 Code Dispatch 的内置展示。`ui-skill` 展示了业务包自行拥有的 `skill` 注册项。
 

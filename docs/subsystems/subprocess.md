@@ -2,13 +2,13 @@
 
 English | [中文](subprocess.zh.md)
 
-The subprocess seam is split across a Service Definition ([dsh-subprocess](../../packages/subprocess/subprocess), `ctx.subprocess`) and Service Provider ([dsh-subprocess-local](../../packages/subprocess/subprocess-local)); its Consumers are other capability seams and out-of-process backends: the [bash executor family](shell.md) uses collected batch output, LSP uses raw protocol pipes, the PTY backend uses the terminal primitive, and the ACP subagent backend uses piped ndjson plus inherited stderr. This seam owns the managed `DSH_*` environment namespace, the shared credential scrub (`scrubbedParentEnv`), and the `CollectedOutput` shape; [dsh-shell](../../packages/shell/shell) re-exports the vocabulary so bash consumers keep one import root.
+Ordinary processes and terminal sessions are independent capability seams. [`dsh-subprocess`](../../packages/subprocess/subprocess) defines `ctx.subprocess` for executable lookup and managed pipe-based process trees; [`dsh-subprocess-pty`](../../packages/subprocess/subprocess-pty) defines optional `ctx.subprocessPty` for controlling terminals and provider-observable session cleanup. The [bash executor family](shell.md) uses collected batch output, LSP and ACP use raw protocol pipes, and the PTY backend uses the optional terminal service. `ctx.subprocess` owns the managed `DSH_*` environment namespace, shared credential scrub (`scrubbedParentEnv`), and `CollectedOutput` vocabulary; [`dsh-subprocess-collector`](../../packages/subprocess/subprocess-collector) supplies provider-neutral tail, offset, spill, and drain behavior.
 
 Source: [`packages/subprocess/subprocess/src/types.ts`](../../packages/subprocess/subprocess/src/types.ts) and [`packages/subprocess/subprocess/src/index.ts`](../../packages/subprocess/subprocess/src/index.ts)
 
 ## Executable lookup
 
-One provider's spawn working directories, executable paths, ordinary processes, and terminal sessions inhabit the same path and process namespace as the mounted filesystem provider. `resolveExecutable(command, env?, signal?)` verifies absolute executable paths or resolves bare names through the provider's scrubbed `PATH` plus deliberate overrides.
+One provider's spawn working directories, executable paths, and ordinary processes inhabit the same path and process namespace as the mounted filesystem provider. `resolveExecutable(command, env?, signal?)` verifies absolute executable paths or resolves bare names through the provider's scrubbed `PATH` plus deliberate overrides. A separately mounted PTY provider must target the same execution world when its consumers share paths with ordinary processes.
 
 ## Managed environment namespace and captured output
 
@@ -131,7 +131,7 @@ interface SubprocessSpawnSpec {
 
 ## Handles: streams, readers, and tree-scoped termination
 
-A spawn returns a live handle immediately. Collect-mode readers take whole-stream byte offsets and never consume, so independent readers cannot steal one another's deltas; piped streams belong to the caller. Termination is tree-scoped on every platform: `terminate()` — the only termination verb — escalates SIGTERM→grace→SIGKILL, and `waitForExit()` observes the whole tree — enough for a consumer to build its own teardown ladder (the ACP backend's stdin-EOF-first `disposeAcpChild` is the template).
+`spawn(spec)` returns a Promise that resolves only after the provider has a positive process id and owns the process tree. Collect-mode readers take whole-stream byte offsets and never consume, so independent readers cannot steal one another's deltas; piped streams belong to the caller. Termination is tree-scoped on every platform: `terminate()` — the only termination verb — escalates SIGTERM→grace→SIGKILL, and `waitForExit()` observes the whole tree — enough for a consumer to build its own teardown ladder (the ACP backend's stdin-EOF-first `disposeAcpChild` is the template).
 
 ```ts type-equiv
 /**
@@ -144,7 +144,7 @@ A spawn returns a live handle immediately. Collect-mode readers take whole-strea
  * the handle unnoticed.
  */
 interface SubprocessHandle {
-  /** Process id (tree root); -1 when the spawn itself failed. */
+  /** Positive process id of the provider-owned tree root. */
   readonly pid: number
   /** The child's stdin, present iff spawned with `stdin: 'pipe'`. */
   readonly stdin: Writable | undefined
@@ -154,7 +154,7 @@ interface SubprocessHandle {
   readonly stderr: Readable | undefined
   /** Offset-based readers for collect-mode streams (also readable after exit). */
   readonly collected: SubprocessCollectedOutputs
-  /** Resolves at process close with exit facts; rejects only for spawn-level failures. */
+  /** Resolves at process close with exit facts; rejects only for failures after creation succeeds. */
   readonly done: Promise<SubprocessOutcome>
   /**
    * Begin the SIGTERM → `graceMs` → SIGKILL escalation on the process tree
@@ -240,13 +240,13 @@ interface SubprocessOutcome {
 
 ## Terminal-process primitive
 
-`spawnTerminal(spec)` is the non-pipe process primitive. The provider allocates the controlling terminal and owns UTF-8 text transport, foreground-process-group inspection and signalling, and one awaited TERM-to-KILL operation that reaches quiescence for every session member the provider can still observe; providers document substrate-specific observability limits. The PTY backend remains responsible for prompt detection, readiness inference, scrollback, sandbox policy, and persistent-session ownership; ordinary `spawn()` cannot reconstruct controlling-terminal semantics.
+`ctx.subprocessPty.spawnTerminal(spec)` is the optional non-pipe process primitive. The independent provider allocates the controlling terminal and owns UTF-8 text transport, foreground-process-group inspection and signalling, and one awaited TERM-to-KILL operation that reaches quiescence for every session member it can still observe. The PTY backend remains responsible for prompt detection, readiness inference, scrollback, sandbox policy, and persistent-session ownership; ordinary `spawn()` cannot reconstruct controlling-terminal semantics.
 
-The terminal spec fully specifies argv, cwd, environment overrides, dimensions, cleanup grace, and optional allocation cancellation. Its handle exposes `pid`, ordered output, `done`, `write`, `inspectForeground`, `signalForeground`, and awaited `terminate`; the exact public shapes are generated into the [`ctx.subprocess` service catalog](#ctxsubprocess--subprocessruntime-abstract-seam).
+The terminal spec fully specifies argv, cwd, environment overrides, dimensions, cleanup grace, and optional allocation cancellation. Its handle exposes `pid`, ordered output, `done`, `write`, `inspectForeground`, `signalForeground`, and awaited `terminate`. Local and E2B providers live in [`dsh-subprocess-pty-local`](../../packages/subprocess/subprocess-pty-local) and [`dsh-subprocess-pty-e2b`](../../packages/e2b/subprocess-pty-e2b).
 
 ## Service behavior
 
-The abstract [`SubprocessRuntime`](../../packages/subprocess/subprocess/src/index.ts) Service Definition specifies execution-world coordinates, executable lookup, ordinary `spawn`, and `spawnTerminal`. [`LocalSubprocessRuntime`](../../packages/subprocess/subprocess-local/src/index.ts) provides them with detached process trees, per-disposition wiring, credential scrubbing, `node-pty`, platform process inspection, and terminate-and-join disposal. See [`dsh-subprocess`](../../packages/subprocess/subprocess/README.md) for the Service Definition contract and [`dsh-subprocess-local`](../../packages/subprocess/subprocess-local/README.md) for local mechanics.
+The abstract [`SubprocessRuntime`](../../packages/subprocess/subprocess/src/index.ts) specifies execution-world coordinates, executable lookup, and ordinary `spawn`; [`LocalSubprocessRuntime`](../../packages/subprocess/subprocess-local/src/index.ts) implements it with detached process trees, shared collection, credential scrubbing, and terminate-and-join disposal. [`SubprocessPtyRuntime`](../../packages/subprocess/subprocess-pty/src/index.ts) independently specifies terminal allocation and session ownership. This split lets ordinary-process deployments omit `node-pty` entirely.
 
 <!-- BEGIN GENERATED cordis-surface (gen-cordis-catalog.ts) — do not edit between markers -->
 
@@ -282,11 +282,10 @@ Abstract subprocess service. Subclass, implement spawn, and load the subclass as
 Implementations must honor these semantics:
 
 - Executable paths belong to one execution world shared with the mounted filesystem provider.
-- spawn returns immediately with a live handle; `done` resolves at process close with exit facts and rejects only for spawn-level failures.
+- spawn resolves only after process creation has produced a real process id and the provider owns the process tree. It rejects when either condition cannot be established. `done` resolves at process close with exit facts and rejects only for failures after creation succeeds.
 - Collect-mode readers are offset-based and non-consuming, so independent readers never consume one another's output; lossy reads report truncation and the spill file holding the complete stream when one exists. Piped streams are handed to the caller raw and never buffered here.
 - SubprocessHandle.terminate (and the spec's abort signal) escalates SIGTERM→grace→SIGKILL — the only termination verb — tree-scoped on every platform. SubprocessHandle.waitForExit observes whole-tree liveness, so a consumer-owned teardown ladder can hold each tier on real quiescence.
 - Disposal of the service terminates all still-running managed processes and awaits their exit.
-- spawnTerminal owns terminal allocation, text transport, foreground groups, signalling, and whole-session quiescence behind one awaited termination method; readiness and persistent-shell policy stay in the PTY consumer. Its output stream ends after queued terminal output when the top-level process exits.
 
 ```ts cordis-catalog
 /**
@@ -306,19 +305,27 @@ abstract resolveExecutable( command: string, env?: Readonly<Record<string, strin
  * Start one managed child process from a fully-specified spec; this seam
  * applies no defaults.
  * @param spec - argv, directory, stdio dispositions, grace, cancellation, and environment.
- * @returns the live process handle (streams/readers, signalling, outcome promise).
+ * @returns the live process handle after its real process id and provider ownership are established.
  */
-abstract spawn(spec: SubprocessSpawnSpec): SubprocessHandle
+abstract spawn(spec: SubprocessSpawnSpec): Promise<SubprocessHandle>
+```
 
+Source: [`packages/subprocess/subprocess/src/index.ts:94`](../../packages/subprocess/subprocess/src/index.ts)
+
+<a id="ctxsubprocesspty--subprocessptyruntime-abstract-seam"></a>
+
+### `ctx.subprocessPty` — `SubprocessPtyRuntime` (abstract seam)
+
+Optional PTY process service. Providers publish a handle only after terminal allocation has a positive process id and the complete session is owned. Service disposal terminates and joins every still-live handle.
+
+```ts cordis-catalog
 /**
- * Allocate a real terminal and start one owned process session. This is the
- * only non-pipe process primitive: implementations own terminal byte I/O,
- * foreground groups, signals, and complete session-tree cleanup.
+ * Allocate a real terminal and start one owned process session.
  * @param spec - fully specified argv, cwd, environment, dimensions, grace, and allocation cancellation.
- * @returns the live terminal handle after allocation succeeds.
+ * @returns the live terminal handle after allocation and ownership succeed.
  */
 abstract spawnTerminal(spec: SubprocessTerminalSpawnSpec): Promise<SubprocessTerminalHandle>
 ```
 
-Source: [`packages/subprocess/subprocess/src/index.ts:102`](../../packages/subprocess/subprocess/src/index.ts)
+Source: [`packages/subprocess/subprocess-pty/src/index.ts:31`](../../packages/subprocess/subprocess-pty/src/index.ts)
 <!-- END GENERATED cordis-surface -->

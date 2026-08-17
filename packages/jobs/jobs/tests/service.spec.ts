@@ -23,8 +23,8 @@ class StubJobRegistry extends JobRegistry {
     }
   }
 
-  start(spec: JobStart): JobId {
-    spec.run()
+  async start(spec: JobStart): Promise<JobId> {
+    await spec.run(new AbortController().signal)
     return JobId(`${spec.kind}-1`)
   }
 
@@ -67,7 +67,7 @@ describe('JobRegistry seam', () => {
     await ctx.plugin(StubJobRegistry)
 
     const detachController = ctx.jobs.attachController('seam-test')
-    const id = ctx.jobs.start({ kind: 'bash', label: 'sleep 60', run: () => ({ cancel() {}, done: new Promise(() => {}) }) })
+    const id = await ctx.jobs.start({ kind: 'bash', label: 'sleep 60', run: async () => ({ cancel() {}, done: new Promise(() => {}) }) })
     expect(id).toBe('bash-1')
     expect(ctx.jobs.list()).toHaveLength(1)
     expect(ctx.jobs.get(id).status).toBe('running')

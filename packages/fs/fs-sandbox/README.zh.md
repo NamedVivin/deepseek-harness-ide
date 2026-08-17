@@ -2,7 +2,7 @@
 
 [English](README.md) | 中文
 
-`SandboxedFileSystem` 扩展 [`LocalFileSystem`](../fs-local/README.md) 并注册为 `ctx.fs`。它逐字继承全部文本存储机制（解析、stat、读取／流式读取、列出、原子写入、按读取、匹配、写入顺序执行的编辑临界区），只为 `writeText`/`editText` 增加按调用的模式围栏。读取始终直接通过：所有模式都允许读取。
+`SandboxedFileSystem` 扩展 [`LocalFileSystem`](../fs-local/README.md) 并注册为 `ctx.fs`。它逐字继承全部文本存储机制（解析、stat、读取／流式读取、无界与有界列出、原子写入、按读取、匹配、写入顺序执行的编辑临界区），只为 `writeText`/`editText` 增加按调用的模式围栏。两种列出形态都属于读取，并保留本地提供方的完整结果上限；所有沙箱模式都允许它们。
 
 它原样复用本地后端配置：`cwd` 仍是相对路径的解析默认值，`diffBasisMaxBytes` 则限制可选的覆写上下文 diff 基础。
 

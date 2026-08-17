@@ -11,6 +11,7 @@ import type {
   ModelRetryNode, RunningToolCall, SessionId, SessionListState, ToolCallBlock, ToolResultNode, TurnErrorNode,
   TurnMaxTokensNode, UserMessageNode, WorkspaceListState,
 } from '@deepseek-ai/dsh-client-runtime/client'
+import type { FileLocation } from '@deepseek-ai/dsh-tools'
 import { bindSnapshotSelector } from '@deepseek-ai/dsh-client-web-react'
 import {
   createSnapshotStore, EMPTY_CONVERSATION_VIEWS, PendingWait,
@@ -152,7 +153,7 @@ function emptyWorkspaces() {
 function makeHarness(init?: Partial<ConversationSnapshot>) {
   const { set, source } = makeSource(init)
   const openDetails = vi.fn<(t: SelectionTarget) => void>()
-  const openFile = vi.fn<(path: string) => void>()
+  const openFile = vi.fn<(location: FileLocation) => Promise<void>>(async () => {})
   const loadOlder = vi.fn()
   const inspectCall = vi.fn<(callId: string) => void>()
   // In-memory scroll memory matching the apply.ts per-session map contract.
@@ -348,7 +349,9 @@ describe('Chat node rendering', () => {
       resolve: (value) => {
         if (value !== 'report.html') return undefined
         return {
-          open: () => { h.openFile(`for-seq-${String(owner.seq)}/site/report.html`) },
+          open: () => {
+            void h.openFile({ path: `for-seq-${String(owner.seq)}/site/report.html`, line: 8 })
+          },
           label: '打开 site/report.html',
           title: 'site/report.html',
         }
@@ -363,7 +366,7 @@ describe('Chat node rendering', () => {
     expect(mention.getAttribute('title')).toBe('site/report.html')
     fireEvent.click(mention)
     // The vocabulary was built from the closing message's own owner currency.
-    expect(h.openFile).toHaveBeenCalledWith('for-seq-4/site/report.html')
+    expect(h.openFile).toHaveBeenCalledWith({ path: 'for-seq-4/site/report.html', line: 8 })
   })
 
   it('formatRunDuration localizes units and floors partial seconds', () => {

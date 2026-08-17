@@ -63,14 +63,22 @@ const runningCode = (callId: string): RunningToolCall => ({
 
 const subCall = (
   seq: number, parent: string, n: number, name: string, args: object, resultText: string, isError = false,
-): ToolCallBlock => ({
-  kind: 'tool-result', seq, time: seq * 1_000,
-  callId: `${parent}:code:${n}`,
-  call: { name, argsRaw: JSON.stringify(args) },
-  callTime: seq * 1_000,
-  content: [{ type: 'text', text: resultText }], isError, callView: null, resultView: null,
-  subCalls: [],
-})
+): ToolCallBlock => {
+  const path = 'path' in args && typeof args.path === 'string' ? args.path : undefined
+  return {
+    kind: 'tool-result', seq, time: seq * 1_000,
+    callId: `${parent}:code:${n}`,
+    call: { name, argsRaw: JSON.stringify(args) },
+    callTime: seq * 1_000,
+    content: [{ type: 'text', text: resultText }],
+    isError,
+    callView: path === undefined
+      ? null
+      : { card: 'generic', title: `Read ${path}`, kind: 'read', locations: [{ path }] },
+    resultView: null,
+    subCalls: [],
+  }
+}
 
 function snapshotWith(
   nodes: ToolResultNode[],

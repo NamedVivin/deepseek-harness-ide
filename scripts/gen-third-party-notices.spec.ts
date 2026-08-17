@@ -27,6 +27,12 @@ describe('THIRD_PARTY_NOTICES.md', () => {
   it('matches what the generator produces from the current manifests', () => {
     const generated = render()
     expect(generated).toContain('It depends on the third-party software listed below.')
+    expect(generated).toContain('## Packaged desktop executable payloads')
+    expect(generated).toContain('Electron 43.2.0 and its bundled Chromium runtime')
+    expect(generated).toContain('Node.js v24.16.0')
+    expect(generated).toContain('`@vscode/ripgrep` 1.18.0')
+    expect(generated).toContain('`koffi` 3.1.1')
+    expect(generated).toContain('`dsh-process-capsule`')
     expect(readFileSync(resolve(root, 'THIRD_PARTY_NOTICES.md'), 'utf8'), 'stale notices — run `pnpm run gen-third-party-notices`').toBe(generated)
   })
 })
@@ -52,6 +58,8 @@ describe('tierExternalDeps', () => {
       // A plugin package's runtime dependency ships even when no app mounts it by default.
       'packages/mcp/mcp-client/package.json': { name: '@deepseek-ai/dsh-mcp-client', dependencies: { 'protocol-sdk': '^1' }, devDependencies: { 'protocol-fixture-server': '^1' } },
       'apps/cli/package.json': { name: '@deepseek-ai/dsh-cli', dependencies: { 'cli-lib': '^1', '@deepseek-ai/dsh-mcp-client': 'workspace:^' } },
+      // Electron is a build-time declaration whose native distribution ships.
+      'apps/desktop/package.json': { name: '@deepseek-ai/dsh-desktop', devDependencies: { electron: '43.2.0', 'forge-tool': '^1' } },
     })
 
     expect(tierExternalDeps(manifests, names)).toEqual(new Map([
@@ -64,6 +72,8 @@ describe('tierExternalDeps', () => {
       ['protocol-sdk', true],
       ['protocol-fixture-server', false],
       ['cli-lib', true],
+      ['electron', true],
+      ['forge-tool', false],
     ]))
   })
 

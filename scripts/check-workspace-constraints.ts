@@ -53,6 +53,13 @@ const releaseMemberDirectory = /^(?:packages\/[^/]+\/[^/]+|apps\/[^/]+|vendor\/[
 const localArtifactDirs = new Set(['node_modules'])
 const appPackageFiles: Readonly<Record<string, readonly string[]>> = {
   '@deepseek-ai/dsh': ['lib/*.js', 'config'],
+  '@deepseek-ai/dsh-desktop': [
+    'lib',
+    'config',
+    'native',
+    'generated/desktop-resource-manifest.json',
+    'forge.config.ts',
+  ],
   // The Web build emits sourcemaps for browser debugging; publishing them is
   // what the payload policy forbids, so the bundle ships without them.
   '@deepseek-ai/dsh-web-frontend': ['dist', '!dist/**/*.map'],
@@ -135,6 +142,12 @@ const packageFileExtras: Readonly<Record<string, readonly string[]>> = {
   '@deepseek-ai/dsh-base': ['cordis.patch.yml'],
   '@deepseek-ai/dsh-web-app': ['cordis.patch.yml'],
   '@deepseek-ai/dsh-headless': ['cordis.patch.yml'],
+  '@deepseek-ai/dsh-ide-app': ['cordis.patch.yml'],
+  '@deepseek-ai/dsh-desktop-app': ['cordis.patch.yml'],
+  '@deepseek-ai/dsh-agent-presets-desktop': ['config'],
+  // Electron main imports the carrier-neutral desktop adapter without loading
+  // the Host provider graph bundled by the package root.
+  '@deepseek-ai/dsh-client-connection-desktop': ['lib/adapter.js'],
   '@deepseek-ai/dsh-client-ui-theme': ['lib/styles'],
   // The Python runtime uses a distinct closed-resolution bin; the public CLI
   // keeps config-owned bare-package resolution through lib/bin.js.
@@ -144,7 +157,18 @@ const packageFileExtras: Readonly<Record<string, readonly string[]>> = {
   // also shares its generated FFI code through a hashed runtime chunk.
   '@deepseek-ai/dsh-sandbox-windows-acl': ['lib/runner.js', 'lib/types-*.js'],
   '@deepseek-ai/dsh-skill-badge': ['assets'],
-  '@deepseek-ai/dsh-subprocess-local': ['scripts/ensure-spawn-helper.mjs'],
+  // App-owned guardian roles use distinct entrypoints so Electron, the
+  // guardian, and the pure Node sidecar never share one execution world.
+  '@deepseek-ai/dsh-subprocess-guardian': [
+    'lib/guardian.js',
+    'lib/host.js',
+    'lib/macos-capsule.js',
+    'lib/protocol.js',
+    'lib/supervisor.js',
+    'lib/windows-koffi.js',
+    'lib/channel-*.js',
+  ],
+  '@deepseek-ai/dsh-subprocess-pty-local': ['scripts/ensure-spawn-helper.mjs'],
 }
 
 function sameStringList(actual: readonly string[] | undefined, expected: readonly string[]): boolean {

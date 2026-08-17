@@ -121,6 +121,12 @@ interface Workspace {
 
 会话的 cwd 在创建时由创建者赋予，而不是由本注册表赋予——API 网关从所选工作区的 `path` 解析新会话的 cwd（回退到显式或默认 cwd），先创建会话使 cwd 落入其不可变的 [`SessionHeader`](persistence.md#sessionheader--metadata-beside-the-log)，再调用 `attachSession`，后者会把已存储的 header cwd 与工作区路径重新校验一遍。首次成功启动时，注册表仅凭已持久化的 header（`id`、`cwd`、`createdAt`——绝不读事件正文）引导历史：把规范 cwd 有效的会话按目录分组为工作区，最新的排在最前；「已初始化」标记最后写入，因此被中断的引导可以安全续跑。引导只发生这一次：没有 cwd 的历史遗留会话保持 Ungrouped，此后创建的会话只能通过 `attachSession` 加入工作区。
 
+## IDE 文件权限
+
+桌面 IDE 通过 `ctx.workspaceFiles` 访问文件，绝不会发送携带权限的根路径。每个 `list`、`read`、`save` 或 `resolveLocation` request 都从 Host 签发的 `WorkspaceId` 开始；gateway 通过 `ctx.workspaceRegistry` 重新解析规范根目录、校验相对路径 segment，并经当前组合已有的 `ctx.fs` provider 执行操作。目录读取采用 provider 侧有界枚举，文本读取同时限制 byte 数并要求前后 version 相等，保存则必须使用 `replaceIfVersion` 和显式 workspace-write sandbox policy。稳定结果码覆盖非法路径、越界、文件类型、编码、大小、权限、读取期间变化与 version conflict。
+
+`ctx.workspaceRegistration` 是原生选择器 BFF。它在 Host 内部消费选中的绝对路径、再次检查取消状态、通过 `ctx.workspaceRegistry` 注册，并只返回生成的 Workspace 投影；renderer 既不会获得 chooser 权限，也不会向该 method 提交路径。
+
 ## 消费方
 
 [dsh-host-apiproxy](../../packages/host/apiproxy) 是产品消费方：它经 `ctx.workspaceRegistry` 向 GUI 客户端提供工作区的 CRUD，并执行上文「先建会话再 attach」的流程。[dsh-agent-instructions](../../packages/context/agent-instructions) 尽管名字如此，却**不是**消费方：它在 agent 自己的 cwd 下发现 AGENTS.md 风格的指令文件，从不触碰 `ctx.workspaceRegistry`——两者共用的这个词指的是用户的工作目录，而非本注册表的实体。
@@ -148,6 +154,65 @@ abstract capability(): DirectoryPickerCapability
 ```
 
 Source: [`packages/host/directory-picker/src/index.ts:131`](../../packages/host/directory-picker/src/index.ts)
+
+<a id="ctxworkspacefiles--workspacefilesgateway"></a>
+
+### `ctx.workspaceFiles` — `WorkspaceFilesGateway`
+
+Host-owned workspace file gateway published through generated Typert Remote descriptors.
+
+```ts cordis-catalog
+/**
+ * List one direct workspace directory without materializing more than the configured entry limit.
+ * @param request - Registered workspace and canonical relative directory.
+ * @param signal - Cancels filesystem work.
+ * @returns stable entries or one business failure.
+ */
+@Remote('list') async list(request: WorkspaceFilesListRequest, signal?: AbortSignal): Promise<WorkspaceFilesResult<WorkspaceFilesListValue>>
+
+/**
+ * Read one regular UTF-8 file and reject a mutation observed during the bounded read.
+ * @param request - Registered workspace and canonical relative file.
+ * @param signal - Cancels filesystem work.
+ * @returns stable content/version pair or one business failure.
+ */
+@Remote('read') async read(request: WorkspaceFilesReadRequest, signal?: AbortSignal): Promise<WorkspaceFilesResult<WorkspaceFilesReadValue>>
+
+/**
+ * Replace one existing file only when its opaque observed revision still matches.
+ * @param request - Complete content and compare-and-swap basis.
+ * @param signal - Cancels before atomic publication.
+ * @returns the durable new revision or one business failure.
+ */
+@Remote('save') async save(request: WorkspaceFilesSaveRequest, signal?: AbortSignal): Promise<WorkspaceFilesResult<WorkspaceFilesSaveValue>>
+
+/**
+ * Resolve an untrusted model-facing location into a canonical relative IDE identity.
+ * @param request - Registered workspace and absolute or relative candidate.
+ * @param signal - Cancels filesystem work.
+ * @returns safe location metadata or one business failure.
+ */
+@Remote('resolveLocation') async resolveLocation( request: WorkspaceFilesResolveLocationRequest, signal?: AbortSignal, ): Promise<WorkspaceFilesResult<WorkspaceFilesResolveLocationValue>>
+```
+
+Source: [`packages/host/workspace-files/src/index.ts:159`](../../packages/host/workspace-files/src/index.ts)
+
+<a id="ctxworkspaceregistration--workspaceregistrationgateway"></a>
+
+### `ctx.workspaceRegistration` — `WorkspaceRegistrationGateway`
+
+Remote gateway that never accepts a renderer-supplied filesystem path.
+
+```ts cordis-catalog
+/**
+ * Open the selected Host picker and register its result while the caller remains live.
+ * @param signal - Renderer request lifetime; a late chooser result is discarded after abort.
+ * @returns the registered Workspace, cancellation, or a stable business failure.
+ */
+@Remote('pickAndRegister') async pickAndRegister(signal?: AbortSignal): Promise<WorkspaceRegistrationResult>
+```
+
+Source: [`packages/host/workspace-registration/src/index.ts:45`](../../packages/host/workspace-registration/src/index.ts)
 
 <a id="ctxworkspaceregistry--workspaceregistry"></a>
 

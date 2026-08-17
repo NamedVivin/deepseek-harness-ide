@@ -40,7 +40,7 @@ Status: implemented
 
 `packages/client/ui-tool/tests/web-card.client.spec.tsx` 在每个接线边界镜像 `terminal-card.spec.tsx`:`webCardModel` 的派生投影每个 source 字段、其截断与缺失 answer 的支路、fetch 派生、以及每个 null 支路（运行中、null result view、generic result view、未知 card 标签、未知 web `kind`）;键控 `WebRow` 对两种 kind 的常驻卡片、其仅摘要行的运行中与失败支路;`GenericToolCard` 兜底为 web 声明工具长出常驻卡片、并为非 web 调用保持纯行;详情面板 Output 区对两种 kind —— 含 `web_fetch` 正文摊平在其 URL/状态卡片下方 —— 及其对非 web 结果的摊平回退;以及在 `web_search` 与 `web_fetch` 两键下用一个组件的键控注册。该文件位于覆盖率 `exclude` 列表（`ui-tool/src/*`）,因此覆盖率运行不度量它。
 
-fixture（`packages/client/connection/src/client/fixture.ts`）添加 turn 66（`web_search`）与 67（`web_fetch`）,内联撰写,因为客户端 fixture 无法 import web 工具:turn 66 的 result view 携带一个 answer 与三个 source,演练引用列表（一个带 snippet 与日期的有标题 source、一个无标题因而以主机名标注链接的 source、一个有日期无 snippet 的 source）并开启截断提示;turn 67 携带抓取的 URL 与一个 200 状态。两者都保留 generic pending call view,仅在 result 时添加 `web` 卡片,匹配约定的 result-only web 形状,且以真实工具命名,使其命中键控 `WebRow`。它们被排在 todo turn（重编号为 68）之前,理由与终端 turn 相同:待定计划在下一个 `turn/start` 退休,所以排在其后的 turn 会清空 dock 的 plan strip。这驱动 built-boot snapshot 与一个实时 `?fixture` 服务。
+fixture（`packages/client/connection-web/src/client/fixture.ts`）添加 turn 66（`web_search`）与 67（`web_fetch`）,内联撰写,因为客户端 fixture 无法 import web 工具:turn 66 的 result view 携带一个 answer 与三个 source,演练引用列表（一个带 snippet 与日期的有标题 source、一个无标题因而以主机名标注链接的 source、一个有日期无 snippet 的 source）并开启截断提示;turn 67 携带抓取的 URL 与一个 200 状态。两者都保留 generic pending call view,仅在 result 时添加 `web` 卡片,匹配约定的 result-only web 形状,且以真实工具命名,使其命中键控 `WebRow`。它们被排在 todo turn（重编号为 68）之前,理由与终端 turn 相同:待定计划在下一个 `turn/start` 退休,所以排在其后的 turn 会清空 dock 的 plan strip。这驱动 built-boot snapshot 与一个实时 `?fixture` 服务。
 
 ## Related
 

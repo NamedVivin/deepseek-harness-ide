@@ -5,8 +5,11 @@ import { fileURLToPath } from 'node:url'
 import { execa } from 'execa'
 import { describe, expect, it, vi } from 'vitest'
 import { resolveExampleLaunch } from '@deepseek-ai/dsh-loader-smoke'
-import { createProcessInspector } from '../src/process-inspector.ts'
-import type { ProcessIdentity, ProcessInspector } from '../src/process-inspector.ts'
+import { createProcessInspector } from '@deepseek-ai/dsh-subprocess-pty-local/src/process-inspector.ts'
+import type {
+  ProcessIdentity,
+  ProcessInspector,
+} from '@deepseek-ai/dsh-subprocess-pty-local/src/process-inspector.ts'
 import { taskkillProcessTree } from '../src/spawn.ts'
 
 type ExitTrigger = 'direct' | 'uncaught-exception' | 'unhandled-rejection' | 'dispose'

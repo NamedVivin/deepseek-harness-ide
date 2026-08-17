@@ -85,7 +85,7 @@ function producer(overrides: Partial<Omit<JobStart, 'run'> & JobHooks> = {}) {
     label,
     ...owner !== undefined ? { owner } : {},
     ...outputLimitBytes !== undefined ? { outputLimitBytes } : {},
-    run: () => hooks,
+    run: async () => hooks,
   }
   return { spec, settle, cancels }
 }
@@ -105,7 +105,7 @@ const tick = () => new Promise<void>(r => setTimeout(r, 0))
 async function settleTasks(ctx: Context, owner: Agent, count: number): Promise<void> {
   for (let i = 0; i < count; i += 1) {
     const p = producer({ owner })
-    ctx.jobs.start(p.spec)
+    await ctx.jobs.start(p.spec)
     p.settle({ status: 'completed' })
     await tick()
   }
@@ -114,9 +114,9 @@ async function settleTasks(ctx: Context, owner: Agent, count: number): Promise<v
 describe('tool-jobs setup', () => {
   it('attaches the job controller on load and detaches it with the fiber', async () => {
     const { ctx, toolsFiber } = await setup()
-    expect(() => ctx.jobs.start(producer().spec)).not.toThrow()
+    await expect(ctx.jobs.start(producer().spec)).resolves.toBeDefined()
     await toolsFiber.dispose()
-    expect(() => ctx.jobs.start(producer().spec)).toThrow('no job controller serves this agent')
+    await expect(ctx.jobs.start(producer().spec)).rejects.toThrow('no job controller serves this agent')
   })
 
   it('rejects a config whose default wait exceeds the cap', async () => {
@@ -172,7 +172,7 @@ describe('tool-jobs setup', () => {
     await ctx.plugin(LocalJobRegistry)
     ToolTasks.apply(ctx, {})
     expect(ctx.tools.get('job_output')).toBeDefined()
-    expect(() => ctx.jobs.start(producer().spec)).not.toThrow()
+    await expect(ctx.jobs.start(producer().spec)).resolves.toBeDefined()
   })
 })
 
@@ -180,7 +180,7 @@ describe('job_output', () => {
   it('reads a consuming delta with a trailing status line', async () => {
     const { ctx } = await setup()
     const chunks = ['line one\n', '']
-    ctx.jobs.start(producer({ readOutput: () => chunks.shift() ?? '' }).spec)
+    await ctx.jobs.start(producer({ readOutput: () => chunks.shift() ?? '' }).spec)
 
     // A body already ending in a newline gets no doubled separator.
     const first = await call(ctx, 'job_output', { job_id: 'bash-1' })
@@ -199,7 +199,7 @@ describe('job_output', () => {
   it('returns the final output of a settled final-output job', async () => {
     const { ctx } = await setup()
     const p = producer({ kind: 'subagent', label: 'research' })
-    ctx.jobs.start(p.spec)
+    await ctx.jobs.start(p.spec)
     expect(text(await call(ctx, 'job_output', { job_id: 'subagent-1' }))).toBe('(no new output)\n[status: running]')
 
     p.settle({ status: 'completed', detail: 'completed', output: 'the answer' })
@@ -209,7 +209,7 @@ describe('job_output', () => {
 
   it('applies a producer limit to the complete body and status result', async () => {
     const { ctx } = await setup()
-    ctx.jobs.start(producer({
+    await ctx.jobs.start(producer({
       outputLimitBytes: 48,
       readOutput: () => '界'.repeat(100),
     }).spec)
@@ -222,7 +222,7 @@ describe('job_output', () => {
   it('preserves empty and newline-terminated output under a producer limit', async () => {
     const { ctx } = await setup()
     const chunks = ['', 'line\n']
-    ctx.jobs.start(producer({
+    await ctx.jobs.start(producer({
       outputLimitBytes: 64,
       readOutput: () => chunks.shift() ?? '',
     }).spec)
@@ -235,7 +235,7 @@ describe('job_output', () => {
 
   it('bounds post-policy output without restoring the canonical status rendering', async () => {
     const { ctx } = await setup()
-    ctx.jobs.start(producer({
+    await ctx.jobs.start(producer({
       outputLimitBytes: 64,
       readOutput: () => 'canonical output',
     }).spec)
@@ -252,7 +252,7 @@ describe('job_output', () => {
 
   it('applies a producer limit to a normalized read failure', async () => {
     const { ctx } = await setup()
-    ctx.jobs.start(producer({
+    await ctx.jobs.start(producer({
       outputLimitBytes: 64,
       readOutput: () => { throw new Error('read failed: '.repeat(100)) },
     }).spec)
@@ -266,7 +266,7 @@ describe('job_output', () => {
   it('bounds pre-, around-, and post-execute policy outcomes and failures', async () => {
     const { ctx } = await setup()
     for (let index = 0; index < 5; index += 1) {
-      ctx.jobs.start(producer({ outputLimitBytes: 64 }).spec)
+      await ctx.jobs.start(producer({ outputLimitBytes: 64 }).spec)
     }
     ctx.on('tools/pre-execute', async (exec, next) => {
       const jobId = (exec.arguments as { job_id?: unknown }).job_id
@@ -322,7 +322,7 @@ describe('job_output', () => {
   it('wait: true blocks until settlement and reports the terminal state', async () => {
     const { ctx } = await setup()
     const p = producer({ kind: 'subagent', label: 'research' })
-    ctx.jobs.start(p.spec)
+    await ctx.jobs.start(p.spec)
 
     const pending = call(ctx, 'job_output', { job_id: 'subagent-1', wait: true })
     p.settle({ status: 'completed', output: 'done deal' })
@@ -331,7 +331,7 @@ describe('job_output', () => {
 
   it('wait: true times out against the configured cap and leaves the job alive', async () => {
     const { ctx } = await setup({ waitTimeoutMs: 10, maxWaitTimeoutMs: 20 })
-    ctx.jobs.start(producer().spec)
+    await ctx.jobs.start(producer().spec)
 
     // A model-supplied timeout far above the cap is clamped: this returns
     // promptly (≤ the 20ms cap), not after ten minutes.
@@ -354,10 +354,10 @@ describe('job_list', () => {
     expect(text(await call(ctx, 'job_list', {}))).toBe('(no background jobs)')
 
     const alice = fakeAgent(ctx, 'sess-alice')
-    ctx.jobs.start(producer({ owner: alice, label: 'pnpm test' }).spec)
-    ctx.jobs.start(producer({ kind: 'subagent', label: 'open research' }).spec)
+    await ctx.jobs.start(producer({ owner: alice, label: 'pnpm test' }).spec)
+    await ctx.jobs.start(producer({ kind: 'subagent', label: 'open research' }).spec)
     const p = producer({ owner: alice, label: 'build' })
-    ctx.jobs.start(p.spec)
+    await ctx.jobs.start(p.spec)
     p.settle({ status: 'completed', detail: 'exit code: 0' })
     await tick()
 
@@ -386,7 +386,7 @@ describe('job_kill', () => {
   it('requests cancellation with the forwarded reason', async () => {
     const { ctx } = await setup()
     const p = producer()
-    ctx.jobs.start(p.spec)
+    await ctx.jobs.start(p.spec)
 
     const result = await call(ctx, 'job_kill', { job_id: 'bash-1', reason: 'superseded' })
     if (result.isError) throw new Error('expected job_kill success')
@@ -404,7 +404,7 @@ describe('job_kill', () => {
   it('applies the producer output limit to a cancellation acknowledgement', async () => {
     const { ctx } = await setup()
     const p = producer({ outputLimitBytes: 8 })
-    ctx.jobs.start(p.spec)
+    await ctx.jobs.start(p.spec)
 
     const result = await call(ctx, 'job_kill', { job_id: 'bash-1' })
     expect(Buffer.byteLength(text(result))).toBeLessThanOrEqual(8)
@@ -413,7 +413,7 @@ describe('job_kill', () => {
 
   it('applies the producer output limit to a normalized cancellation failure', async () => {
     const { ctx } = await setup()
-    ctx.jobs.start(producer({
+    await ctx.jobs.start(producer({
       outputLimitBytes: 64,
       cancel: () => { throw new Error('cancel failed: '.repeat(100)) },
     }).spec)
@@ -448,7 +448,7 @@ describe('job_kill', () => {
       return next()
     })
     for (let index = 0; index < 4; index += 1) {
-      ctx.jobs.start(producer({ outputLimitBytes: 64 }).spec)
+      await ctx.jobs.start(producer({ outputLimitBytes: 64 }).spec)
     }
 
     const replaced = await call(ctx, 'job_kill', { job_id: 'bash-1', reason: 'replace' })
@@ -472,7 +472,7 @@ describe('job_kill', () => {
     const { ctx } = await setup()
     let delta = 'unread tail'
     const p = producer({ readOutput: () => { const d = delta; delta = ''; return d } })
-    ctx.jobs.start(p.spec)
+    await ctx.jobs.start(p.spec)
     p.settle({ status: 'completed', detail: 'exit code: 0' })
     await tick()
 
@@ -542,7 +542,7 @@ describe('completion notices across scoped mounts', () => {
       // No waiter: `settle()` leaves `reported` false, which is the only path
       // that reaches the notice listeners at all.
       const p = producer({ owner, label: 'pnpm test' })
-      ctx.jobs.start(p.spec)
+      await ctx.jobs.start(p.spec)
       p.settle({ status: 'completed', detail: 'exit code: 0' })
       await tick()
 
@@ -560,7 +560,7 @@ describe('completion notice delivery', () => {
     const followup = vi.fn()
     const owner = fakeAgent(ctx, 'sess-1', { inject, followup, status: 'idle' })
     const p = producer({ owner, label: 'pnpm test' })
-    ctx.jobs.start(p.spec)
+    await ctx.jobs.start(p.spec)
 
     p.settle({ status: 'completed', detail: 'exit code: 0' })
     await tick()
@@ -574,7 +574,7 @@ describe('completion notice delivery', () => {
     const followup = vi.fn()
     const owner = fakeAgent(ctx, 'sess-1', { inject, followup, status: 'idle' })
     const p = producer({ owner })
-    ctx.jobs.start(p.spec)
+    await ctx.jobs.start(p.spec)
 
     p.settle({ status: 'completed' })
     await tick()
@@ -618,11 +618,11 @@ describe('completion notice delivery', () => {
     const followup = vi.fn()
     const owner = fakeAgent(ctx, 'sess-1', { inject, followup, status: 'idle' })
     let settle!: (outcome: JobOutcome) => void
-    ctx.jobs.start({
+    await ctx.jobs.start({
       kind: 'bash',
       label: 'sleep 60',
       owner,
-      run: () => ({
+      run: async () => ({
         cancel() { settle({ status: 'killed' }) },
         done: new Promise<JobOutcome>((res) => { settle = res }),
       }),
@@ -642,11 +642,11 @@ describe('completion notice delivery', () => {
     const inject = vi.fn()
     const followup = vi.fn()
     const owner = fakeAgent(ctx, 'sess-1', { inject, followup, status: 'idle' })
-    ctx.jobs.start({
+    await ctx.jobs.start({
       kind: 'bash',
       label: 'broken producer',
       owner,
-      run: () => ({
+      run: async () => ({
         cancel() { throw new Error('cancel boom') },
         done: new Promise<JobOutcome>(() => {}),
       }),
@@ -658,7 +658,7 @@ describe('completion notice delivery', () => {
     // spend a model request on an owner being destroyed.
     await disposeAgentScope(owner)
     await tick()
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('work may be orphaned'))
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('work may still be running'))
     expect(followup).not.toHaveBeenCalled()
     expect(inject).not.toHaveBeenCalled()
   })
@@ -687,7 +687,7 @@ describe('completion notices', () => {
     const inject = vi.fn()
     const owner = fakeAgent(ctx, 'sess-1', { inject })
     const p = producer({ owner, label: 'pnpm test' })
-    ctx.jobs.start(p.spec)
+    await ctx.jobs.start(p.spec)
 
     p.settle({ status: 'completed', detail: 'exit code: 0' })
     await tick()
@@ -715,7 +715,7 @@ describe('completion notices', () => {
       label: 'x'.repeat(1_000),
       outputLimitBytes: 61,
     })
-    ctx.jobs.start(first.spec)
+    await ctx.jobs.start(first.spec)
     first.settle({ status: 'completed', detail: 'd'.repeat(1_000) })
     await tick()
 
@@ -742,7 +742,7 @@ describe('completion notices', () => {
       label: 'x'.repeat(1_000),
       outputLimitBytes: 80,
     })
-    ctx.jobs.start(second.spec)
+    await ctx.jobs.start(second.spec)
     second.settle({ status: 'completed', detail: 'd'.repeat(1_000) })
     await tick()
 
@@ -757,7 +757,7 @@ describe('completion notices', () => {
     const { ctx } = await setup()
     for (let index = 0; index < 99; index += 1) {
       const prior = producer({ kind: 'pty-send' })
-      ctx.jobs.start(prior.spec)
+      await ctx.jobs.start(prior.spec)
       prior.settle({ status: 'completed' })
       await tick()
     }
@@ -769,7 +769,7 @@ describe('completion notices', () => {
       label: 'x'.repeat(1_000),
       outputLimitBytes: 64,
     })
-    ctx.jobs.start(target.spec)
+    await ctx.jobs.start(target.spec)
 
     target.settle({ status: 'completed', detail: 'd'.repeat(1_000) })
     await tick()
@@ -786,8 +786,8 @@ describe('completion notices', () => {
     const owner = fakeAgent(ctx, 'sess-1', { inject })
     const tiny = producer({ owner, kind: 'pty-send', label: 'x'.repeat(100), outputLimitBytes: 8 })
     const short = producer({ owner, kind: 'pty-send', label: 'x'.repeat(100), outputLimitBytes: 32 })
-    ctx.jobs.start(tiny.spec)
-    ctx.jobs.start(short.spec)
+    await ctx.jobs.start(tiny.spec)
+    await ctx.jobs.start(short.spec)
 
     tiny.settle({ status: 'completed' })
     short.settle({ status: 'completed' })
@@ -806,7 +806,7 @@ describe('completion notices', () => {
     const inject = vi.fn()
     const owner = fakeAgent(ctx, 'sess-1', { inject })
     const p = producer({ owner })
-    ctx.jobs.start(p.spec)
+    await ctx.jobs.start(p.spec)
 
     await call(ctx, 'job_kill', { job_id: 'bash-1' }, owner)
     p.settle({ status: 'killed' })
@@ -819,7 +819,7 @@ describe('completion notices', () => {
     const inject = vi.fn()
     const owner = fakeAgent(ctx, 'sess-1', { inject })
     const p = producer({ owner, kind: 'subagent' })
-    ctx.jobs.start(p.spec)
+    await ctx.jobs.start(p.spec)
 
     const pending = call(ctx, 'job_output', { job_id: 'subagent-1', wait: true }, owner)
     p.settle({ status: 'completed', output: 'answer' })
@@ -831,7 +831,7 @@ describe('completion notices', () => {
     const { ctx } = await setup()
     // Unowned: settles with nobody to notify — nothing throws.
     const unowned = producer()
-    ctx.jobs.start(unowned.spec)
+    await ctx.jobs.start(unowned.spec)
     unowned.settle({ status: 'completed' })
     await tick()
   })
@@ -844,7 +844,7 @@ describe('completion notices', () => {
     const oldInject = vi.fn()
     const oldOwner = fakeAgent(ctx, 'shared', { inject: oldInject })
     const p = producer({ owner: oldOwner })
-    ctx.jobs.start(p.spec)
+    await ctx.jobs.start(p.spec)
 
     detachAgent(oldOwner)
     const replacementInject = vi.fn()
@@ -861,7 +861,7 @@ describe('completion notices', () => {
     const warn = vi.spyOn(ctx.logger, 'warn').mockImplementation(() => {})
     const owner = fakeAgent(ctx, 'sess-1', { inject: () => { throw new Error('unexpected inject bug') } })
     const p = producer({ owner })
-    ctx.jobs.start(p.spec)
+    await ctx.jobs.start(p.spec)
     p.settle({ status: 'completed' })
     await tick()
     // The throw escapes the notice listener and is contained (logged) by the
@@ -877,9 +877,9 @@ describe('completion notices', () => {
     // Settlement must not depend on a later registry lookup: the exact owner
     // supplied at start remains the destination while its own scope is live.
     const p1 = producer({ owner })
-    ctx.jobs.start(p1.spec)
+    await ctx.jobs.start(p1.spec)
     const p2 = producer({ owner })
-    ctx.jobs.start(p2.spec)
+    await ctx.jobs.start(p2.spec)
 
     await agentsFiber.dispose()
     p1.settle({ status: 'completed' })

@@ -7,12 +7,12 @@ import type {
   SubprocessOutcome,
   SubprocessTerminalHandle,
   SubprocessTerminalSignal,
-} from '@deepseek-ai/dsh-subprocess'
+} from '@deepseek-ai/dsh-subprocess-pty'
 import { TerminalError } from '@deepseek-ai/dsh-terminal'
 import type {
   ProcessIdentity,
   ProcessInspector,
-} from '@deepseek-ai/dsh-subprocess-local/src/process-inspector.ts'
+} from '@deepseek-ai/dsh-subprocess-pty-local/src/process-inspector.ts'
 
 class FakeInspector implements ProcessInspector {
   pgid: number | undefined = 456

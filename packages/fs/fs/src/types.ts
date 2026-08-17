@@ -98,8 +98,9 @@ export interface FsPathInfo {
 }
 
 /**
- * One direct child returned by {@link FileSystem.listDir}. Listing returns
- * metadata and resolved targets only; it must not read file contents.
+ * One direct child returned by {@link FileSystem.listDir} or
+ * {@link FileSystem.listDirBounded}. Listing returns metadata and resolved
+ * targets only; it must not read file contents.
  */
 export interface FsDirEntry {
   /** Basename of the child inside the listed directory. */

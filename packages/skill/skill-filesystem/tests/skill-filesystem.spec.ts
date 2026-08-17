@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { mkdir, readdir, readFile, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, opendir, readdir, readFile, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import type { Dirent } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { Context } from '@deepseek-ai/cordis'
@@ -104,6 +105,25 @@ class TestFileSystem extends FileSystem {
     this.listDirCalls += 1
     if (this.failListDirPaths.has(target.displayPath)) throw new Error('list temporarily failed')
     const entries = await readdir(target.displayPath, { withFileTypes: true, encoding: 'utf8' })
+    return this.projectDirectoryEntries(target, entries)
+  }
+
+  override async listDirBounded(
+    target: FsTarget,
+    options: { maxEntries: number },
+  ): Promise<FsDirEntry[]> {
+    this.listDirCalls += 1
+    if (this.failListDirPaths.has(target.displayPath)) throw new Error('list temporarily failed')
+    const entries: Dirent[] = []
+    const directory = await opendir(target.displayPath, { encoding: 'utf8', bufferSize: 1 })
+    for await (const entry of directory) {
+      entries.push(entry)
+      if (entries.length > options.maxEntries) throw new FsError('directory too large', 'FS_TOO_LARGE')
+    }
+    return this.projectDirectoryEntries(target, entries)
+  }
+
+  private async projectDirectoryEntries(target: FsTarget, entries: Dirent[]): Promise<FsDirEntry[]> {
     const result: FsDirEntry[] = []
     for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
       const childPath = join(target.displayPath, entry.name)

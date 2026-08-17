@@ -7,9 +7,13 @@ dsh web GUI 的浏览器侧：shell 启动、浏览器与宿主通信、共享 U
 | 包 | 目的 |
 |---|---|
 | [`web/`](web/README.md) | 从客户端条目图启动浏览器 shell。 |
-| [`modules/`](modules/README.md) | 加载浏览器侧客户端模块。 |
+| [`modules/`](modules/README.md) | 发现并加载载体中立的 renderer 模块。 |
+| [`modules-web/`](modules-web/README.md) | 通过 Web 路由与 index 注入交付 Client bundle。 |
+| [`modules-desktop/`](modules-desktop/README.md) | 把已签名 Client bundle 映射到不可变 `dsh-app://` URL。 |
 | [`web-react/`](web-react/README.md) | 连接 shell 运行时与 React 渲染。 |
-| [`connection/`](connection/README.md) | 维护浏览器与宿主之间的 RPC 通信和事件传递。 |
+| [`connection/`](connection/README.md) | 持有载体中立的 RPC registry、Client handle 与事件循环 consumer。 |
+| [`connection-web/`](connection-web/README.md) | 通过受信任的 HTTP route 与 WebSocket 下行流承载 Connection。 |
+| [`connection-desktop/`](connection-desktop/README.md) | 通过类型化且有界的 desktop child IPC 承载 Connection。 |
 | [`runtime/`](runtime/README.md) | 为会话、工作区和 UI 组合提供共享客户端服务。 |
 | [`hmr/`](hmr/README.md) | 在开发期间刷新客户端插件。 |
 | [`locale/`](locale/README.md) | 提供本地化偏好与消息词典。 |
@@ -22,6 +26,8 @@ dsh web GUI 的浏览器侧：shell 启动、浏览器与宿主通信、共享 U
 | [`ui-layout/`](ui-layout/README.md) | 排列应用的主要区域。 |
 | [`ui-sidebar/`](ui-sidebar/README.md) | 展示工作区与会话导航。 |
 | [`ui-workspace/`](ui-workspace/README.md) | 提供工作区选择与创建界面。 |
+| [`ui-directory-picker-desktop/`](ui-directory-picker-desktop/README.md) | 在 Host 内部注册原生桌面选择结果。 |
+| [`ui-ide/`](ui-ide/README.md) | 提供工作区文件浏览、编辑、Markdown 预览与 CAS 恢复。 |
 | [`ui-conversation/`](ui-conversation/README.md) | 展示当前对话及其输入界面。 |
 | [`ui-tool/`](ui-tool/README.md) | 编排工具调用树和按工具键控的视图。 |
 | [`ui-workflow-run/`](ui-workflow-run/README.md) | 把持久工作流运行回放为 Chat 嵌套折叠项，并只为实时子 Session 提供导航。 |

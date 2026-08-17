@@ -13,13 +13,23 @@ export type ApiRemoteLookupError =
   | { readonly code: 'session-not-found'; readonly message: string; readonly details: { readonly sessionId: SessionId } }
   | { readonly code: 'internal'; readonly message: string; readonly details: Record<never, never> }
 
+/** Host-owned business failure preserved while a cold Agent is prepared. */
+export interface ApiRemoteSetupFailure {
+  /** Stable code understood by the Host's caller-facing protocol. */
+  readonly code: string
+  /** Caller-facing failure message. */
+  readonly message: string
+  /** Structured fields required by that code. */
+  readonly details: object
+}
+
 /** Result of resolving one session identity to its live Agent. */
-export type ApiRemoteAgentResult =
+export type ApiRemoteAgentResult<SetupFailure extends ApiRemoteSetupFailure = never> =
   | { readonly agent: Agent }
-  | { readonly error: ApiRemoteLookupError }
+  | { readonly error: ApiRemoteLookupError | SetupFailure }
 
 /** Resume configuration supplied by the owning Host composition. */
-export interface ApiRemoteAgentOptions {
+export interface ApiRemoteAgentOptions<SetupFailure extends ApiRemoteSetupFailure = never> {
   /** Read the per-Agent defaults when a cold identity must resume. */
   readonly agentOptions?: () => AgentOptions
   /**
@@ -36,6 +46,13 @@ export interface ApiRemoteAgentOptions {
   readonly setup?: (
     session: { meta: SessionHeader; events: readonly SessionEvent[] },
   ) => AgentSetup | Promise<AgentSetup>
+  /**
+   * Preserve a recognized Host policy failure raised while resolving or
+   * mounting the cold Agent's setup. Unrecognized failures remain `internal`.
+   * @param error - failure raised before cold resume commits.
+   * @returns caller-facing failure, or undefined to retain generic handling.
+   */
+  readonly mapResumeFailure?: (error: unknown) => SetupFailure | undefined
 }
 
 /** Cold identity absent from the durable session store. */
@@ -118,10 +135,10 @@ export async function inspectApiRemoteSession(
  * @param options - defaults and Agent-scope setup used only for cold resume.
  * @returns resolver shared by legacy API Proxy methods and Typert lookups.
  */
-export function createApiRemoteAgentResolver(
+export function createApiRemoteAgentResolver<SetupFailure extends ApiRemoteSetupFailure = never>(
   ctx: Context,
-  options: ApiRemoteAgentOptions,
-): (sessionId: SessionId) => Promise<ApiRemoteAgentResult> {
+  options: ApiRemoteAgentOptions<SetupFailure>,
+): (sessionId: SessionId) => Promise<ApiRemoteAgentResult<SetupFailure>> {
   const resumes = new Map<SessionId, Promise<Agent>>()
 
   const fencedLiveAgent = (sessionId: SessionId): ApiRemoteAgentResult | undefined => {
@@ -133,7 +150,7 @@ export function createApiRemoteAgentResolver(
     return { agent: live }
   }
 
-  const agentFor = async (sessionId: SessionId): Promise<ApiRemoteAgentResult> => {
+  const agentFor = async (sessionId: SessionId): Promise<ApiRemoteAgentResult<SetupFailure>> => {
     const fenced = fencedLiveAgent(sessionId)
     if (fenced !== undefined) return fenced
     const attached = ctx.sessions.get(sessionId)
@@ -180,6 +197,8 @@ export function createApiRemoteAgentResolver(
       if (error instanceof ApiRemoteSubagentSessionOwnership) {
         return { error: apiRemoteSubagentOwnershipError(error.sessionId) }
       }
+      const mapped = options.mapResumeFailure?.(error)
+      if (mapped !== undefined) return { error: mapped }
       const fenced = fencedLiveAgent(sessionId)
       if (fenced !== undefined) return fenced
       const attached = ctx.sessions.get(sessionId)

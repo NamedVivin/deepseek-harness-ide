@@ -10,6 +10,7 @@
 // contract only forwards it (type-definition authority stays with the layer
 // that produces the values).
 import type { ToolCallBlock, ToolResultNode } from '@deepseek-ai/dsh-client-runtime/client'
+import type { FileLocation } from '@deepseek-ai/dsh-tools'
 
 export type { ToolCallBlock } from '@deepseek-ai/dsh-client-runtime/client'
 
@@ -88,6 +89,8 @@ export interface ToolRowModel {
    * relative values against the session cwd before opening.
    */
   filePath: string | undefined
+  /** Complete presenter-owned location for the row's single path link. */
+  fileLocation: FileLocation | undefined
   /** Expanded-body input text (pretty args); null = no input section. */
   body: string | null
   /** Flattened result text ({@link resultText}); null while running or when the result carries no text. */
@@ -188,6 +191,13 @@ function deriveFilePath(variant: ToolRowVariant, argsRaw: string): string | unde
   return picked === undefined ? undefined : firstLine(picked)
 }
 
+function presentedFileLocation(block: ToolCallBlock, filePath: string | undefined): FileLocation | undefined {
+  if (filePath === undefined || block.callView === null) return undefined
+  const locations = block.callView.card === 'terminal' ? [] : block.callView.locations ?? []
+  return locations.find(location => location.path === filePath)
+    ?? (locations.length === 1 ? locations[0] : undefined)
+}
+
 function deriveBody(variant: ToolRowVariant, argsRaw: string): string | null {
   if (argsRaw === '') return null
   const parsed = parseArgs(argsRaw)
@@ -227,11 +237,13 @@ export function toolRowModel(toolName: string, block: ToolCallBlock, cwd?: strin
   // would erase the collapsed error row's summary slot.
   const output = done ? (resultText(block) || null) : null
   const errorSummary = state === 'error' && output !== null ? firstLine(output) : null
+  const filePath = deriveFilePath(variant, argsRaw)
   return {
     variant,
     title: toolTitle ?? VARIANT_TITLES[variant],
     summary,
-    filePath: deriveFilePath(variant, argsRaw),
+    filePath,
+    fileLocation: presentedFileLocation(block, filePath),
     body: deriveBody(variant, argsRaw),
     output,
     errorSummary,

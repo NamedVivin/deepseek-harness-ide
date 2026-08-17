@@ -31,6 +31,13 @@ const VERSION_METADATA_KEY = 'dsh-version'
 const BINARY_SAMPLE_BYTES = 8192
 const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/
 
+interface BoundedDirectoryEntry {
+  name: string
+  pathType: string
+  targetType: string
+  size: number
+}
+
 function assertNotAborted(signal: AbortSignal | undefined, operation: string): void {
   if (signal?.aborted === true) throw new FsError(`${operation} aborted`, 'FS_ABORTED')
 }
@@ -80,6 +87,51 @@ function decodeCanonicalPath(encoded: string): string {
   }
   if (!posix.isAbsolute(path)) throw new Error('fs-e2b: canonical path is not absolute')
   return path
+}
+
+function decodeBoundedDirectoryEntries(encoded: string): BoundedDirectoryEntry[] {
+  if (encoded.length === 0) return []
+  if (!BASE64.test(encoded)) {
+    throw new Error('fs-e2b: bounded directory transport returned invalid base64')
+  }
+  const framed = Buffer.from(encoded, 'base64')
+  if (framed.toString('base64') !== encoded || framed.at(-1) !== 0) {
+    throw new Error('fs-e2b: bounded directory transport returned invalid NUL framing')
+  }
+  let decoded: string
+  try {
+    decoded = new TextDecoder('utf-8', { fatal: true }).decode(framed)
+  } catch (error: unknown) {
+    throw new Error('fs-e2b: bounded directory transport is not valid UTF-8', { cause: error })
+  }
+  const fields = decoded.slice(0, -1).split('\0')
+  if (fields.length % 4 !== 0) {
+    throw new Error('fs-e2b: bounded directory transport returned an incomplete record')
+  }
+  const entries: BoundedDirectoryEntry[] = []
+  for (let index = 0; index < fields.length; index += 4) {
+    const [name, pathType, targetType, sizeText] = fields.slice(index, index + 4) as
+      [string, string, string, string]
+    const size = Number(sizeText)
+    if (name.length === 0 || name === '.' || name === '..' || name.includes('/')) {
+      throw new Error('fs-e2b: bounded directory transport returned an invalid child name')
+    }
+    if (pathType.length !== 1 || targetType.length !== 1) {
+      throw new Error('fs-e2b: bounded directory transport returned an invalid file type')
+    }
+    if (!/^\d+$/.test(sizeText) || !Number.isSafeInteger(size)) {
+      throw new Error('fs-e2b: bounded directory transport returned an invalid file size')
+    }
+    entries.push({ name, pathType, targetType, size })
+  }
+  return entries
+}
+
+function findType(pathType: string, targetType: string): FsInfo['type'] {
+  const type = pathType === 'l' ? targetType : pathType
+  if (type === 'f') return 'file'
+  if (type === 'd') return 'directory'
+  return 'other'
 }
 
 function signalOpts(signal: AbortSignal | undefined): { signal?: AbortSignal } {
@@ -373,6 +425,50 @@ export class E2BFileSystem extends FileSystem {
     }
   }
 
+  override async listDirBounded(
+    target: FsTarget,
+    options: { maxEntries: number },
+    signal?: AbortSignal,
+  ): Promise<FsDirEntry[]> {
+    const info = await this.stat(target, signal)
+    if (info === undefined) throw new FsError(`cannot list "${target.displayPath}": not found`, 'FS_NOT_FOUND')
+    if (info.type !== 'directory') throw new FsError(`cannot list "${target.displayPath}": not a directory`, 'FS_NOT_DIRECTORY')
+    try {
+      const sandbox = await this.ctx.e2b.getSandbox()
+      const listed = await this.listDirectoryBoundedRemote(
+        sandbox,
+        String(target.targetKey),
+        options.maxEntries + 1,
+        signal,
+      )
+      if (listed.length > options.maxEntries) {
+        throw new FsError(
+          `cannot list "${target.displayPath}": directory exceeds the ${options.maxEntries}-entry limit`,
+          'FS_TOO_LARGE',
+        )
+      }
+      const entries: FsDirEntry[] = []
+      for (const entry of listed.sort((left, right) => left.name.localeCompare(right.name))) {
+        assertNotAborted(signal, 'list')
+        const displayPath = posix.join(target.displayPath, entry.name)
+        const childPath = posix.join(String(target.targetKey), entry.name)
+        const canonical = entry.pathType === 'l'
+          ? await this.canonicalPath(sandbox, childPath, signal)
+          : childPath
+        const type = findType(entry.pathType, entry.targetType)
+        entries.push({
+          name: entry.name,
+          type,
+          target: { targetKey: FsTargetKey(canonical), displayPath },
+          ...(type === 'file' && entry.pathType !== 'l' ? { size: entry.size } : {}),
+        })
+      }
+      return entries
+    } catch (error: unknown) {
+      throw mapError(error, 'list', target.displayPath, signal)
+    }
+  }
+
   override async writeText(
     target: FsTarget,
     content: string,
@@ -447,6 +543,34 @@ export class E2BFileSystem extends FileSystem {
         commandOpts(signal),
       )
       return decodeCanonicalPath(result.stdout)
+    } catch (error: unknown) {
+      if (error instanceof CommandExitError) throw new Error(error.stderr || error.message, { cause: error })
+      throw error
+    }
+  }
+
+  private async listDirectoryBoundedRemote(
+    sandbox: Sandbox,
+    path: string,
+    entryLimit: number,
+    signal?: AbortSignal,
+  ): Promise<BoundedDirectoryEntry[]> {
+    const fieldLimit = entryLimit * 4
+    const command = [
+      'set -o pipefail;',
+      `find -P -- ${quoteE2BShellArg(path)} -mindepth 1 -maxdepth 1 -printf '%f\\0%y\\0%Y\\0%s\\0'`,
+      `| head -z -n ${fieldLimit} | base64 -w0;`,
+      'statuses=("${PIPESTATUS[@]}");',
+      'if (( statuses[0] != 0 && statuses[0] != 141 )); then exit "${statuses[0]}"; fi;',
+      'if (( statuses[1] != 0 || statuses[2] != 0 )); then exit 1; fi',
+    ].join(' ')
+    try {
+      const result = await sandbox.commands.run(command, commandOpts(signal))
+      const entries = decodeBoundedDirectoryEntries(result.stdout)
+      if (entries.length > entryLimit) {
+        throw new Error('fs-e2b: bounded directory transport exceeded its requested entry limit')
+      }
+      return entries
     } catch (error: unknown) {
       if (error instanceof CommandExitError) throw new Error(error.stderr || error.message, { cause: error })
       throw error

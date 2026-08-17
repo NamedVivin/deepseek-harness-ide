@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
+import type { ModuleLoaderV2 } from '@deepseek-ai/cordis-plugin-loader/src/internal.ts'
 import Include from '@deepseek-ai/cordis-plugin-include'
 import LlmRuntime from '@deepseek-ai/dsh-llm'
 import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
@@ -13,11 +14,14 @@ import AgentRegistry, { assembleContextFor, type Agent } from '@deepseek-ai/dsh-
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import AgentPresets, {
-  COMPOSITION_FILE, leakedServices, livePresetMounts, mountPreset, PresetMountError, serviceForAgent,
+  COMPOSITION_FILE, leakedServices, livePresetMounts, PresetAdmissionError,
+  PresetAdmissionProofError, PresetMountError, serviceForAgent, standingMountFor,
 } from '@deepseek-ai/dsh-agent-presets'
-import type { Config } from '@deepseek-ai/dsh-agent-presets'
+import type { Config, PresetAdmissionProof } from '@deepseek-ai/dsh-agent-presets'
 import type {} from '@deepseek-ai/dsh-agent-presets/types'
 import { bindScopeParent, createScope, scopeOf } from '@deepseek-ai/dsh-scope'
+import { PresetAdmissionRuntime } from '../src/admission.ts'
+import { mountPreset } from '../src/mount.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -311,17 +315,196 @@ describe('rejecting a composition that cannot be used', () => {
     expect(serviceForAgent(ctx, { ctx: orphan.ctx }, 'fixtureIsolatedSvc')).toBeUndefined()
   })
 
-  it('refuses to mount a preset directly into an unscoped context', async () => {
-    // The service's own mount() guards this before delegating; the exported
-    // function is callable on its own, so the boundary holds there too.
+  it('refuses a low-level mount without runtime-issued authority', async () => {
     const preset = await ctx.agentPresets.resolve('standard')
+    const scoped = createScope(ctx, { test: 'forged-proof' })
+    const before = livePresetMounts().length
 
-    await expect(mountPreset(ctx, preset)).rejects.toThrow(/unscoped context/)
+    await expect(mountPreset(scoped.ctx, preset, {} as PresetAdmissionProof))
+      .rejects.toMatchObject({ reason: 'unrecognized' })
+    expect(livePresetMounts()).toHaveLength(before)
+    expect(toolNames(ctx)).toEqual([])
+  })
+
+  it('keeps the scope guard behind valid low-level mount authority', async () => {
+    const preset = await ctx.agentPresets.resolve('standard')
+    const runtime = new PresetAdmissionRuntime()
+    const proof = runtime.authorize('mount', preset.id)
+
+    await expect(mountPreset(ctx, preset, proof)).rejects.toThrow(/unscoped context/)
+    expect(toolNames(ctx)).toEqual([])
   })
 
   it('reports the known ids when a preset is unknown', async () => {
     await expect(ctx.agentPresets.resolve('nope'))
       .rejects.toThrow(/preset "nope" not found \(available: .*standard/)
+  })
+})
+
+describe('admitting preset operations', () => {
+  it('owns a contribution with the registering Cordis effect', async () => {
+    const owner = ctx.plugin({
+      inject: ['agentPresets'],
+      apply(policyCtx: Context) {
+        policyCtx.agentPresets.registerAdmission({
+          admit: request => ({
+            code: 'fixture-denied',
+            reason: 'the fixture policy denies this request',
+            details: { requested: request.presetId },
+          }),
+        })
+      },
+    })
+    await owner.await()
+
+    await expect(ctx.agentPresets.resolve('standard')).rejects.toMatchObject({
+      name: 'PresetAdmissionError',
+      metadata: {
+        operation: 'resolve',
+        presetId: 'standard',
+        code: 'fixture-denied',
+        details: { requested: 'standard' },
+      },
+    })
+
+    await owner.dispose()
+    await expect(ctx.agentPresets.resolve('standard')).resolves.toMatchObject({ id: 'standard' })
+  })
+
+  it('refuses each asynchronous entry point before mounting its provider subtree', async () => {
+    const seen: string[] = []
+    ctx.agentPresets.registerAdmission({
+      admit: (request) => {
+        seen.push(request.operation)
+        return { code: `deny-${request.operation}`, reason: 'blocked by the fixture policy' }
+      },
+    })
+    const before = livePresetMounts().length
+    const mountScope = createScope(ctx, { test: 'admission-mount' })
+    const recomposeScope = createScope(ctx, { test: 'admission-recompose' })
+
+    await expect(ctx.agentPresets.resolve('isolated')).rejects.toBeInstanceOf(PresetAdmissionError)
+    await expect(ctx.agentPresets.mount(mountScope.ctx, 'isolated')).rejects.toMatchObject({
+      metadata: { operation: 'mount', presetId: 'isolated', code: 'deny-mount' },
+    })
+    await expect(ctx.agentPresets.recompose(recomposeScope.ctx, 'isolated')).rejects.toMatchObject({
+      metadata: { operation: 'recompose', presetId: 'isolated', code: 'deny-recompose' },
+    })
+    await expect(ctx.agentPresets.standingKeyFor('isolated')).rejects.toMatchObject({
+      metadata: { operation: 'standingKeyFor', presetId: 'isolated', code: 'deny-standingKeyFor' },
+    })
+
+    expect(seen).toEqual(['resolve', 'mount', 'recompose', 'standingKeyFor'])
+    expect(livePresetMounts()).toHaveLength(before)
+    expect(providedServiceNames(ctx)).not.toContain('fixtureIsolatedSvc')
+  })
+
+  it('refuses composeFrom before binding the child or mounting another subtree', async () => {
+    const owner = ctx.plugin({
+      inject: ['agentPresets'],
+      apply(policyCtx: Context) {
+        policyCtx.agentPresets.registerAdmission({
+          admit: request => request.operation === 'composeFrom'
+            ? { code: 'child-denied', reason: 'children are disabled' }
+            : undefined,
+        })
+      },
+    })
+    await owner.await()
+    const parent = await agentOn(ctx, 'sess-admission-parent', 'standard')
+    const child = createScope(ctx, { test: 'denied-child' })
+    const before = livePresetMounts().length
+
+    try {
+      ctx.agentPresets.composeFrom(child.ctx, parent.ctx)
+      throw new Error('composeFrom unexpectedly admitted the child')
+    } catch (error) {
+      expect(error).toMatchObject({
+        name: 'PresetAdmissionError',
+        metadata: { operation: 'composeFrom', presetId: 'standard', code: 'child-denied' },
+      })
+    }
+    expect(standingMountFor(child.ctx)).toBeUndefined()
+    expect(livePresetMounts()).toHaveLength(before)
+  })
+
+  it('binds standing records to the issuing policy generation', async () => {
+    const owner = ctx.plugin({
+      inject: ['agentPresets'],
+      apply(policyCtx: Context) {
+        policyCtx.agentPresets.registerAdmission({ admit: () => undefined })
+      },
+    })
+    await owner.await()
+    const before = livePresetMounts().filter(mount => mount.presetId === 'standard').length
+    const parent = await agentOn(ctx, 'sess-proof-parent', 'standard')
+    const joined = standingMountFor(parent.ctx)!
+    const internal = await (ctx.agentPresets as unknown as {
+      standing: Map<string, Promise<{ proof: PresetAdmissionProof }>>
+    }).standing.get('standard')!
+
+    expect(internal.proof).toBe(joined.proof)
+    expect(livePresetMounts().filter(mount => mount.presetId === 'standard')).toHaveLength(before + 1)
+
+    await owner.dispose()
+    const staleChild = createScope(ctx, { test: 'stale-child' })
+    try {
+      ctx.agentPresets.composeFrom(staleChild.ctx, parent.ctx)
+      throw new Error('composeFrom unexpectedly accepted a stale generation')
+    } catch (error) {
+      expect(error).toBeInstanceOf(PresetAdmissionProofError)
+      expect(error).toMatchObject({ presetId: 'standard', reason: 'stale-policy' })
+    }
+
+    const service = ctx.agentPresets as unknown as {
+      resolveMountable(operation: 'standingKeyFor', id: string): Promise<unknown>
+      ensureStanding(admitted: unknown): Promise<{ proof: PresetAdmissionProof }>
+    }
+    const [leftAdmission, rightAdmission] = await Promise.all([
+      service.resolveMountable('standingKeyFor', 'standard'),
+      service.resolveMountable('standingKeyFor', 'standard'),
+    ])
+    const [leftStanding, rightStanding] = await Promise.all([
+      service.ensureStanding(leftAdmission),
+      service.ensureStanding(rightAdmission),
+    ])
+    expect(rightStanding.proof).toBe(leftStanding.proof)
+
+    const currentParent = await agentOn(ctx, 'sess-proof-current', 'standard')
+    const current = standingMountFor(currentParent.ctx)!
+    expect(current.proof).not.toBe(joined.proof)
+    expect(livePresetMounts().filter(mount => mount.presetId === 'standard')).toHaveLength(before + 2)
+    const currentChild = createScope(ctx, { test: 'current-child' })
+    expect(ctx.agentPresets.composeFrom(currentChild.ctx, currentParent.ctx)).toBe('standard')
+
+    const preset = await ctx.agentPresets.resolve('standard')
+    const bypass = createScope(ctx, { test: 'reused-proof' })
+    await expect(mountPreset(bypass.ctx, preset, current.proof))
+      .rejects.toMatchObject({ reason: 'not-issued' })
+    expect(livePresetMounts().filter(mount => mount.presetId === 'standard')).toHaveLength(before + 2)
+  })
+
+  it('unwinds a subtree when policy changes while its rows start', async () => {
+    const dispose = ctx.agentPresets.registerAdmission({ admit: () => undefined })
+    const internal = ctx.loader.internal!
+    vi.restoreAllMocks()
+    const load = internal.import.bind(internal)
+    const imported = vi.spyOn(internal, 'import').mockImplementation((...args: Parameters<typeof internal.import>) => {
+      dispose()
+      const importV2 = load as ModuleLoaderV2['import']
+      return importV2(...args as Parameters<ModuleLoaderV2['import']>)
+    })
+    const scoped = createScope(ctx, { test: 'policy-rotated-during-mount' })
+    const before = livePresetMounts().length
+
+    try {
+      await expect(ctx.agentPresets.mount(scoped.ctx, 'standard'))
+        .rejects.toMatchObject({ reason: 'stale-policy' })
+    } finally {
+      imported.mockRestore()
+    }
+    expect(livePresetMounts()).toHaveLength(before)
+    expect(toolNames(ctx)).toEqual([])
   })
 })
 
@@ -465,6 +648,8 @@ describe('replacing a composition', () => {
       selected.push([sessionId, agentPreset])
     })
 
+    agent.session.append('turn/start', { turn: 1 })
+    expect(selected).toEqual([])
     agent.session.append('agent-preset/selected', { agentPreset: 'minimal' })
 
     expect(selected).toEqual([[SessionId('sess-selected'), 'minimal']])
@@ -661,17 +846,18 @@ describe('editing a composition file', () => {
 
   it('keeps a newer generation pointer when a stale refresh loses the swap race', async () => {
     const { scoped, path } = await editable('guarded-refresh')
-    const preset = await scoped.agentPresets.resolve('guarded-refresh')
     await agentOn(scoped, 'sess-guarded-refresh-seed', 'guarded-refresh')
     const service = scoped.agentPresets as unknown as {
       standing: Map<string, Promise<{
         key: unknown
         scope: unknown
         stamp: { mtimeMs: number; size: number }
+        proof: PresetAdmissionProof
       }>>
-      ensureStanding(current: typeof preset): Promise<unknown>
+      resolveMountable(operation: 'standingKeyFor', id: string): Promise<unknown>
+      ensureStanding(current: unknown): Promise<unknown>
     }
-    const stalePromise = service.standing.get(preset.id)!
+    const stalePromise = service.standing.get('guarded-refresh')!
     const stale = await stalePromise
     await writeFile(path, rowFor('afterwards'))
     const { mtimeMs, size } = await stat(path)
@@ -680,11 +866,12 @@ describe('editing a composition file', () => {
 
     // `await pending` yields before the guarded delete, letting the winning
     // refresher replace the pointer deterministically instead of by timing.
-    const refresh = service.ensureStanding(preset)
-    service.standing.set(preset.id, newerPromise)
+    const admitted = await service.resolveMountable('standingKeyFor', 'guarded-refresh')
+    const refresh = service.ensureStanding(admitted)
+    service.standing.set('guarded-refresh', newerPromise)
 
     expect(await refresh).toBe(newer)
-    expect(service.standing.get(preset.id)).toBe(newerPromise)
+    expect(service.standing.get('guarded-refresh')).toBe(newerPromise)
   })
 
   it('hands a host reader the standing key without starting an agent', async () => {
@@ -702,15 +889,17 @@ describe('editing a composition file', () => {
 
   it('refuses to mount a generation it cannot stamp', async () => {
     const { scoped, path } = await editable('unstampable')
-    await rm(path)
-
     // Discovery would refuse the preset too; a caller that resolved just
     // before the deletion must get a mount failure, not an unstamped
     // generation that no later edit could ever refresh.
     const racer = scoped.agentPresets as unknown as {
-      ensureStanding(preset: { id: string; trust: 'user'; path: string }): Promise<unknown>
+      resolveMountable(operation: 'mount', id: string): Promise<unknown>
+      ensureStanding(admitted: unknown): Promise<unknown>
     }
-    await expect(racer.ensureStanding({ id: 'unstampable', trust: 'user', path }))
+    const admitted = await racer.resolveMountable('mount', 'unstampable')
+    await rm(path)
+
+    await expect(racer.ensureStanding(admitted))
       .rejects.toThrow(PresetMountError)
     expect(livePresetMounts().filter(mount => mount.presetId === 'unstampable')).toHaveLength(0)
   })
@@ -720,16 +909,17 @@ describe('editing a composition file', () => {
     await agentOn(scoped, 'sess-stale-served', 'stale')
     expect(livePresetMounts().filter(mount => mount.presetId === 'stale')).toHaveLength(1)
 
-    await rm(path)
-
     // Discovery refuses a preset whose composition cannot be statted, so the
     // public route cannot reach this state — but a caller that resolved just
     // before the deletion still can, and it must be served the standing
     // generation rather than failed over a stat.
     const racer = scoped.agentPresets as unknown as {
-      ensureStanding(preset: { id: string; trust: 'user'; path: string }): Promise<unknown>
+      resolveMountable(operation: 'mount', id: string): Promise<unknown>
+      ensureStanding(admitted: unknown): Promise<unknown>
     }
-    await racer.ensureStanding({ id: 'stale', trust: 'user', path })
+    const admitted = await racer.resolveMountable('mount', 'stale')
+    await rm(path)
+    await racer.ensureStanding(admitted)
 
     expect(livePresetMounts().filter(mount => mount.presetId === 'stale')).toHaveLength(1)
   })

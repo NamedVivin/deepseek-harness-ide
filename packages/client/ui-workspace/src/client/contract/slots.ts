@@ -13,9 +13,10 @@
  * picking interaction — a renderless native-chooser driver or an in-app
  * browsing dialog. ui-workspace owns the trigger (the "Add workspace…"
  * entry, present only while the hole is occupied) and the adoption
- * semantics (`createWorkspace({ path })`, the retryable error dialog,
- * Choose again); the occupant owns everything between `open` and the picked path,
- * including creating a new directory to hand back. That occupant-owned
+ * semantics (adopting either a picked path or a Host-registered Workspace,
+ * the retryable error dialog, Choose again); the occupant owns everything
+ * between `open` and its result, including creating or registering the
+ * directory it hands back. That occupant-owned
  * creation is why adding a workspace has a single route: an unoccupied hole
  * leaves the surface with no add affordance at all.
  * Two holes exist because the two menu surfaces are independent slot entries
@@ -44,6 +45,8 @@ export interface DirectoryFlowOwnerProps {
   busy: boolean
   /** The operator picked a directory (absolute host path); the owner adopts it. */
   onPicked: (path: string) => void
+  /** The Host picker flow already registered the selected directory; the owner selects this Workspace directly. */
+  onRegistered: (workspace: WorkspaceView) => void
   /** The operator dismissed the interaction; the owner just closes the flow. */
   onCancel: () => void
   /** The interaction itself failed (chooser missing, listing denied); the owner shows its error surface. */

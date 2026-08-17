@@ -29,7 +29,7 @@ async function bench() {
 function owner(overrides: Partial<DirectoryFlowOwnerProps> = {}): DirectoryFlowOwnerProps {
   return {
     open: true, busy: false,
-    onPicked: vi.fn(), onCancel: vi.fn(), onError: vi.fn(),
+    onPicked: vi.fn(), onRegistered: vi.fn(), onCancel: vi.fn(), onError: vi.fn(),
     ...overrides,
   }
 }

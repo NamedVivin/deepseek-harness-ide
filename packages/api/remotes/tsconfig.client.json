@@ -37,6 +37,12 @@
       "path": "../../host/plugin-inventory"
     },
     {
+      "path": "../../host/workspace-files"
+    },
+    {
+      "path": "../../host/workspace-registration"
+    },
+    {
       "path": "../../interaction/commands"
     },
     {

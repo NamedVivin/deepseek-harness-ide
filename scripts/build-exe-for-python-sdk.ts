@@ -418,7 +418,7 @@ class SingleExeBuild {
     if (this.cli.dryRun) console.log(`build-exe-for-python-sdk: [dry-run] rm -rf ${stagedBuild}`)
     else await rm(stagedBuild, { recursive: true, force: true })
     if (target.platform !== 'linux') return
-    const source = join(root, 'packages', 'subprocess', 'subprocess-local', 'node_modules', 'node-pty', 'build', 'Release', 'pty.node')
+    const source = join(root, 'packages', 'subprocess', 'subprocess-pty-local', 'node_modules', 'node-pty', 'build', 'Release', 'pty.node')
     const destination = join(stagedBuild, 'Release', 'pty.node')
     if (this.cli.dryRun) {
       console.log(`build-exe-for-python-sdk: [dry-run] cp ${source} ${destination}`)

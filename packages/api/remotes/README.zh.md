@@ -4,9 +4,9 @@
 
 为本应用选定的 Host Remote 能力提供双侧 BFF。Host 入口负责 Agent/Session 身份策略；Client 入口以运行时值形式导入生成的 `/remote` 产物，通过 `ctx.remote.$mount()` 挂载每项贡献，并重新导出对应的声明合并。Client 业务包依赖该外观，而不依赖 Gateway 实现或单独的 Remote 运行时入口。
 
-`createApiRemoteAgentResolver()` 会复用 live Agent、恢复普通冷会话、对并发恢复去重、保留 subagent ownership fence，并为 Typert `agent` 和 `session` lookup 配置同一个 resolver。标准 Web API Proxy 提供 Agent 默认值和 scope 设置，再将返回的 resolver 用于旧方法，使已迁移与未迁移方法共用同一份策略实现。
+`createApiRemoteAgentResolver()` 会复用 live Agent、恢复普通冷会话、对并发恢复去重、保留 subagent ownership fence，并为 Typert `agent` 和 `session` lookup 配置同一个 resolver。所属 Host 提供 Agent 默认值与 scope setup；`mapResumeFailure` 可以保留解析或挂载该 setup 时出现的已识别 Host policy 拒绝，未识别的失败仍归为 `internal`。标准 Web API Proxy 把返回的 resolver 用于旧方法，使已迁移与未迁移方法共用同一份身份策略实现。
 
-当前 Client 组合挂载 Goal Remote 贡献和只读 Host 插件清单贡献（`pluginInventory/list`）。该组合卸载时，Cordis effect 的所有权机制会撤回所有贡献；`@deepseek-ai/dsh-api-gateway/client` 负责描述符校验、可追踪 namespace Service、直接与作用域方法、调用与取消。Client 入口通过 Cordis 消费共享的 `TypertClientRemote` 接口，不导入具体 Gateway；它只以 type-only 形式重新导出 Gateway Client face 的声明合并，因此消费端经由本外观取到转发事件词汇时，运行时不会多出一条通往 Gateway 实现的边。
+当前 Client 组合挂载 Goal Remote 贡献、只读 Host 插件清单贡献（`pluginInventory/list`），以及有界工作区文件贡献（`workspaceFiles/list`、`read`、`save` 和 `resolveLocation`）。该组合卸载时，Cordis effect 的所有权机制会撤回所有贡献；`@deepseek-ai/dsh-api-gateway/client` 负责描述符校验、可追踪 namespace Service、直接与作用域方法、调用与取消。Client 入口通过 Cordis 消费共享的 `TypertClientRemote` 接口，不导入具体 Gateway；它只以 type-only 形式重新导出 Gateway Client face 的声明合并与工作区文件 payload 词汇，因此消费端经由本外观取到这些类型或转发事件词汇时，运行时不会多出一条通往 Host 实现的边。
 
 本包不包含传输逻辑或 Host 服务发现逻辑。Web 或未来的 TUI 只要提供同一份不依赖 React 的 `ctx.remote` 约定，均可复用其 Client face。
 

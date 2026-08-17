@@ -18,6 +18,9 @@
       "path": "../subprocess"
     },
     {
+      "path": "../subprocess-collector"
+    },
+    {
       "path": "../../util/timeout"
     },
     {

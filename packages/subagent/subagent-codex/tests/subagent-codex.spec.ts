@@ -185,7 +185,7 @@ function runSpec(
     cwd: process.cwd(),
     env: {},
     disposeGraceMs: DEFAULT_DISPOSE_GRACE_MS,
-    spawn: () => child.handle,
+    spawn: async () => child.handle,
     ...overrides,
   }
 }
@@ -846,7 +846,7 @@ describe('CodexAppServerWire', () => {
 describe('run lifecycle and quiescence', () => {
   it('spawns the fixed app-server, publishes after thread creation, and disposes once', async () => {
     const child = fakeChild()
-    const spawn = vi.fn(() => child.handle)
+    const spawn = vi.fn(async () => child.handle)
     const starting = startCodexRun(
       request([{ type: 'text', text: 'task' }]),
       runSpec(child, { env: { OPENAI_API_KEY: 'fake' }, spawn }),
@@ -1017,7 +1017,7 @@ describe('run lifecycle and quiescence', () => {
     await ctx.plugin(SubagentRuntime)
     await ctx.plugin(LocalSubprocessRuntime)
     const child = fakeChild()
-    const spawn = vi.spyOn(ctx.subprocess, 'spawn').mockReturnValue(child.handle)
+    const spawn = vi.spyOn(ctx.subprocess, 'spawn').mockResolvedValue(child.handle)
     const warnings: string[] = []
     ctx.logger.warn = ((message: unknown) => {
       warnings.push(String(message))
@@ -1087,18 +1087,6 @@ describe('disposeCodexChild', () => {
     })
     await expect(disposeCodexChild(wire, child.handle))
       .resolves.toBeUndefined()
-  })
-
-  it('handles a spawn-level failure with no process tree', async () => {
-    const child = fakeChild({
-      pid: -1,
-      doneError: new Error('spawn failed'),
-    })
-    const wire = new CodexAppServerWire(child.handle.stdout!, child.handle.stdin!)
-    await expect(disposeCodexChild(wire, child.handle))
-      .resolves.toBeUndefined()
-    expect(child.terminate).not.toHaveBeenCalled()
-    expect(child.waitForExit).not.toHaveBeenCalled()
   })
 
   it('reports direct-child observer failure and accepts absent stdin', async () => {

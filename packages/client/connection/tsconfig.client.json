@@ -6,23 +6,15 @@
     "tsBuildInfoFile": "lib/tsconfig.client.tsbuildinfo"
   },
   "files": [
-    "src/api-path.ts",
     "src/client/api.ts",
     "src/client/connection.ts",
-    "src/client/fixture.ts",
     "src/client/index.ts",
-    "src/client/random-uuid.ts",
-    "src/client/rpc.ts",
-    "src/client/web-api-client.ts",
-    "src/loopback-hostname.ts",
+    "src/client/transport.ts",
     "src/rpc.ts"
   ],
   "references": [
     {
       "path": "../../../vendor/cordis"
-    },
-    {
-      "path": "../../attachment/attachment"
     },
     {
       "path": "../../core/session"
@@ -34,16 +26,10 @@
       "path": "../../host/apiproxy"
     },
     {
-      "path": "../../interaction/commands"
-    },
-    {
       "path": "../../llm/llm"
     },
     {
       "path": "../../runtime-diagnostics/invariants"
-    },
-    {
-      "path": "../../util/brand"
     }
   ]
 }

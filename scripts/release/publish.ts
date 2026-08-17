@@ -17,7 +17,13 @@ import { readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { parseArgs } from 'node:util'
-import { releaseFamily } from './families.ts'
+import {
+  releaseFamily,
+  releasePromotions,
+  tarballName,
+  type ReleaseFamily,
+  type ReleaseMember,
+} from './families.ts'
 import { attempt, isEntry } from './process.ts'
 import { packedIdentity, readPublishOrder } from './tarball.ts'
 
@@ -45,6 +51,64 @@ const PUBLISH_SPACING_MS = 2_000
 type RegistryState =
   | { readonly kind: 'absent' }
   | { readonly kind: 'present'; readonly integrity: string }
+
+/** One tarball identity recovered from the immutable pack artifact. */
+export interface PublishCandidate {
+  /** Filename recorded by the pack step. */
+  readonly filename: string
+  /** Package name declared inside the tarball. */
+  readonly name: string
+  /** Package version declared inside the tarball. */
+  readonly version: string
+}
+
+/**
+ * Require the pack artifact to contain every family member exactly once.
+ * @param family - family selected by the publish invocation.
+ * @param members - complete members discovered from the tagged checkout.
+ * @param candidates - ordered tarball identities from the pack artifact.
+ */
+export function verifyPublishCandidates(
+  family: ReleaseFamily,
+  members: readonly ReleaseMember[],
+  candidates: readonly PublishCandidate[],
+): void {
+  const byName = new Map(members.map(member => [member.name, member]))
+  const seen = new Set<string>()
+  for (const candidate of candidates) {
+    const member = byName.get(candidate.name)
+    if (member === undefined) throw new Error(`${candidate.name} is not a member of release family ${family.id}`)
+    if (seen.has(candidate.name)) throw new Error(`${candidate.name} appears twice in the packed publish order`)
+    seen.add(candidate.name)
+    if (candidate.version !== member.version) {
+      throw new Error(`${candidate.name} packed version ${candidate.version}, expected ${member.version}`)
+    }
+    const expectedFilename = tarballName(member)
+    if (candidate.filename !== expectedFilename) {
+      throw new Error(`${candidate.name} is recorded as ${candidate.filename}, expected ${expectedFilename}`)
+    }
+  }
+  const missing = members.filter(member => !seen.has(member.name))
+  if (missing.length > 0) {
+    throw new Error(`packed publish order is missing family member(s): ${missing.map(member => member.name).join(', ')}`)
+  }
+}
+
+/**
+ * Return the promotion that currently holds one member from publication.
+ * @param family - family that owns the member's publication policy.
+ * @param member - member being considered for publication.
+ * @param promotions - external promotions verified by the credentialed workflow.
+ * @returns missing promotion name, or `undefined` when publication may proceed.
+ */
+export function publicationHold(
+  family: ReleaseFamily,
+  member: ReleaseMember,
+  promotions: ReadonlySet<string>,
+): string | undefined {
+  const required = family.publicationGate(member)
+  return required !== undefined && !promotions.has(required) ? required : undefined
+}
 
 /**
  * Whether a failed publish is worth another attempt.
@@ -134,13 +198,30 @@ async function main(): Promise<void> {
   }
 
   const family = releaseFamily(values.family)
-  const directory = resolve(process.cwd(), values.from)
+  const root = process.cwd()
+  const directory = resolve(root, values.from)
+  const members = family.members(root)
+  family.verifyVersions(members)
+  const promotions = releasePromotions(family, members, process.env.DSH_RELEASE_PROMOTIONS)
+  const packed = readPublishOrder(directory).map((filename) => {
+    const tarball = join(directory, filename)
+    return { filename, ...packedIdentity(tarball), tarball }
+  })
+  verifyPublishCandidates(family, members, packed)
 
   let published = 0
   let skipped = 0
-  for (const filename of readPublishOrder(directory)) {
-    const tarball = join(directory, filename)
-    const { name, version } = packedIdentity(tarball)
+  let held = 0
+  const membersByName = new Map(members.map(member => [member.name, member]))
+  for (const { name, version, tarball } of packed) {
+    const member = membersByName.get(name)
+    if (member === undefined) throw new Error(`${name} disappeared from release family ${family.id}`)
+    const hold = publicationHold(family, member, promotions)
+    if (hold !== undefined) {
+      console.log(`release publish: ${name}@${version} held for promotion ${hold}`)
+      held += 1
+      continue
+    }
     const state = registryState(name, version)
     if (state.kind === 'present') {
       const local = integrityOf(tarball)
@@ -163,7 +244,10 @@ async function main(): Promise<void> {
     published += 1
   }
 
-  console.log(`release publish: family ${family.id}, ${String(published)} published, ${String(skipped)} already present`)
+  console.log(
+    `release publish: family ${family.id}, ${String(published)} published,`
+    + ` ${String(skipped)} already present, ${String(held)} held for promotion`,
+  )
 }
 
 if (isEntry(import.meta.url)) await main()

@@ -68,7 +68,7 @@ class FakeBash extends ShellExecutor {
     return this.handler(spec)
   }
 
-  override start(spec: ShellExecSpec): ShellProcess {
+  override async start(spec: ShellExecSpec): Promise<ShellProcess> {
     this.startCalls++
     this.specs.push(spec)
     return this.backgroundHandler(spec)
@@ -195,7 +195,7 @@ class ConfiningFakeBash extends ShellExecutor {
     })
   }
 
-  override start(spec: ShellExecSpec): ShellProcess {
+  override async start(spec: ShellExecSpec): Promise<ShellProcess> {
     this.modes.push(spec.sandboxPolicy?.mode)
     return fakeProcess()
   }

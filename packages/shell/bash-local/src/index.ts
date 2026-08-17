@@ -223,7 +223,7 @@ export class LocalBashExecutor extends ShellExecutor {
   protected async runArgv(spec: ShellExecSpec, argv: readonly string[]): Promise<ShellRunResult> {
     // One deadline combines timeout and upstream cancellation; disposal clears its timer.
     using d = deadline(spec.signal, spec.timeoutMs, 'BASH_TIMEOUT')
-    const handle = this.ctx.subprocess.spawn(this.spawnSpec(spec, argv, spec.stdoutMaxBytes, d.signal))
+    const handle = await this.ctx.subprocess.spawn(this.spawnSpec(spec, argv, spec.stdoutMaxBytes, d.signal))
     const outcome = await handle.done
     const collected = LocalBashExecutor.collected(handle)
     // Only this executor's timeout reason counts as timedOut; outer deadlines count as aborts.
@@ -239,7 +239,7 @@ export class LocalBashExecutor extends ShellExecutor {
     }
   }
 
-  start(spec: ShellExecSpec): ShellProcess {
+  async start(spec: ShellExecSpec): Promise<ShellProcess> {
     return this.startArgv(spec, ['bash', '-c', spec.command])
   }
 
@@ -250,51 +250,44 @@ export class LocalBashExecutor extends ShellExecutor {
    * execution boundary.
    * @param spec - resolved execution settings and caller-owned command metadata.
    * @param argv - exact executable and arguments to hand to `ctx.subprocess`.
-   * @returns the live background handle; spawn rejection settles it as killed.
+   * @param configure - optional synchronous setup before process settlement is observed.
+   * @returns the live background handle after process creation succeeds.
    */
-  protected startArgv(spec: ShellExecSpec, argv: readonly string[]): ShellProcess {
+  protected async startArgv(
+    spec: ShellExecSpec,
+    argv: readonly string[],
+    configure?: (process: ShellProcess) => void,
+  ): Promise<ShellProcess> {
     // Background runs ignore timeoutMs; callers stop them through kill() or spec.signal.
-    const running = this.ctx.subprocess.spawn(this.spawnSpec(spec, argv, this.config.maxOutputBytes, spec.signal))
+    const running = await this.ctx.subprocess.spawn(this.spawnSpec(spec, argv, this.config.maxOutputBytes, spec.signal))
     const collected = LocalBashExecutor.collected(running)
 
-    // A spawn failure produces no process output, so the subprocess service has nothing
-    // to buffer; the note is delivered exactly once through the read path.
-    let spawnFailureNote: string | undefined
-    const consumeSpawnFailure = (): string => {
-      const note = spawnFailureNote ?? ''
-      spawnFailureNote = undefined
+    // A post-creation monitoring failure may have no process stderr. Deliver
+    // its diagnostic exactly once through the read path.
+    let processFailureNote: string | undefined
+    const consumeProcessFailure = (): string => {
+      const note = processFailureNote ?? ''
+      processFailureNote = undefined
       return note
     }
 
     let stdoutOffset = 0
     let stderrOffset = 0
+    const completion = Promise.withResolvers<void>()
     const proc: ShellProcess = {
       status: 'running',
       exitCode: null,
       signal: null,
-      done: running.done.then((outcome) => {
-        // Any signal termination is killed, including a command signaling itself.
-        if (proc.status === 'running') {
-          proc.status = spec.signal?.aborted === true || outcome.signal !== null ? 'killed' : 'completed'
-        }
-        proc.exitCode = outcome.exitCode
-        proc.signal = outcome.signal
-        this.onProcessDone(proc, collected.stderr.readFrom(0).text, false)
-      }, (error: unknown) => {
-        // Background spawn failures settle as killed and surface through the read path.
-        proc.status = 'killed'
-        spawnFailureNote = `spawn failed: ${String(error)}`
-        this.onProcessDone(proc, spawnFailureNote, true, error)
-      }),
+      done: completion.promise,
       readOutput: (): ShellProcessRead => {
         const out = collected.stdout.readFrom(stdoutOffset)
         const err = collected.stderr.readFrom(stderrOffset)
         stdoutOffset = out.nextOffset
         stderrOffset = err.nextOffset
 
-        // A failed spawn never produced process output, so the note and real
-        // stderr text are mutually exclusive.
-        const errText = err.text.length > 0 ? err.text : consumeSpawnFailure()
+        // Prefer retained process stderr; otherwise deliver a post-creation
+        // observation failure exactly once.
+        const errText = err.text.length > 0 ? err.text : consumeProcessFailure()
         // Single newline between sections: stdout chunks usually end with one
         // already; add it only when missing.
         const separator = out.text.length > 0 && !out.text.endsWith('\n') ? '\n' : ''
@@ -314,20 +307,35 @@ export class LocalBashExecutor extends ShellExecutor {
         return true
       },
     }
+    configure?.(proc)
+    void running.done.then((outcome) => {
+      // Any signal termination is killed, including a command signaling itself.
+      if (proc.status === 'running') {
+        proc.status = spec.signal?.aborted === true || outcome.signal !== null ? 'killed' : 'completed'
+      }
+      proc.exitCode = outcome.exitCode
+      proc.signal = outcome.signal
+      this.onProcessDone(proc, collected.stderr.readFrom(0).text, false)
+    }, (error: unknown) => {
+      // Post-creation monitoring failures settle as killed and surface through the read path.
+      proc.status = 'killed'
+      processFailureNote = `process failed: ${String(error)}`
+      this.onProcessDone(proc, processFailureNote, true, error)
+    }).then(completion.resolve, completion.reject)
     return proc
   }
 
   /**
    * Settlement hook for subclasses that attach execution facts to a process.
-   * Called after exit facts or spawn-failure output are stamped and before
+   * Called after exit facts or process-observation failure output are stamped and before
    * {@link ShellProcess.done} resolves. The base implementation is intentionally
    * empty.
    * @param _proc - the settled process handle.
    * @param _stderr - the process's retained stderr tail used by subclasses for settlement classification.
-   * @param _spawnFailed - whether the subprocess promise rejected before a process started.
-   * @param _spawnError - the original spawn rejection reason, which may itself be undefined.
+   * @param _observationFailed - whether post-creation process observation failed.
+   * @param _observationError - the observation failure, which may itself be undefined.
    */
-  protected onProcessDone(_proc: ShellProcess, _stderr: string, _spawnFailed: boolean, _spawnError?: unknown): void {}
+  protected onProcessDone(_proc: ShellProcess, _stderr: string, _observationFailed: boolean, _observationError?: unknown): void {}
 }
 
 export default LocalBashExecutor

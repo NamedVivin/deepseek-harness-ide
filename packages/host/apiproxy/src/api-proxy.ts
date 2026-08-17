@@ -29,7 +29,7 @@ import {
 } from '@deepseek-ai/dsh-workspace'
 // Type-only: brings the `ctx.tools` Context merge into this program (viewFor reads presenters).
 import {
-  InvalidPresetIdError, PresetExistsError, PresetMountError,
+  InvalidPresetIdError, PresetAdmissionError, PresetExistsError, PresetMountError,
   PresetNotWritableError, resolveSessionPreset,
   SETTINGS_NAMESPACE as AGENT_PRESET_SETTINGS_NAMESPACE, UnknownPresetError,
 } from '@deepseek-ai/dsh-agent-presets'
@@ -381,6 +381,23 @@ function err<T>(request: RpcRequest<unknown>, error: RpcError): RpcResponse<T> {
   return { rpcId: request.rpcId, result: { ok: false, error } }
 }
 
+/** Preserve the desktop admission provider's stable refusal on the RPC wire. */
+function presetAdmissionFailure(error: unknown): RpcError | undefined {
+  if (!(error instanceof PresetAdmissionError)
+    || error.metadata.code !== 'desktop-preset-unsupported') return undefined
+  const supportedPreset = error.metadata.details?.supportedPreset
+  return {
+    code: 'desktop-preset-unsupported',
+    message: error.message,
+    details: {
+      agentPreset: error.metadata.presetId,
+      operation: error.metadata.operation,
+      reason: error.metadata.reason,
+      ...typeof supportedPreset === 'string' ? { supportedPreset } : {},
+    },
+  }
+}
+
 /**
  * The RPC refusal a preset failure becomes, or undefined when the failure is
  * about something else.
@@ -393,6 +410,8 @@ function err<T>(request: RpcRequest<unknown>, error: RpcError): RpcResponse<T> {
  * @returns the refusal, or undefined when the caller should keep handling.
  */
 function presetFailure(request: RpcRequest<unknown>, error: unknown): RpcResponse<never> | undefined {
+  const admission = presetAdmissionFailure(error)
+  if (admission !== undefined) return err(request, admission)
   if (error instanceof UnknownPresetError) {
     return err(request, {
       code: 'agent-preset-not-found',
@@ -1009,6 +1028,8 @@ function noRoster(agentPreset: string): RpcError {
 
 /** Map one authoring/roster failure onto its wire code. */
 function presetError(agentPreset: string, error: unknown): RpcError {
+  const admission = presetAdmissionFailure(error)
+  if (admission !== undefined) return admission
   if (error instanceof UnknownPresetError) {
     return {
       code: 'agent-preset-not-found',
@@ -1268,6 +1289,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
     agentOptions,
     setup: async ({ meta, events }) =>
       (await composeAgent(resolveSessionPreset({ header: meta, events }))).setup,
+    mapResumeFailure: presetAdmissionFailure,
   })
 
   /** Send one transient frame to every connected mux consumer. */
@@ -1607,10 +1629,11 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
       // an unnamed session composes today, and presenters are pure display,
       // so the worst a mismatch produces is the generic card it had anyway.
       return await presets.standingKeyFor(resolveSessionPreset(session))
-    } catch {
+    } catch (error) {
       // Swallows only the unknown/unusable-preset rejection from the roster:
       // a deleted or broken preset must degrade this read, never fail it.
-      return undefined
+      if (error instanceof UnknownPresetError || error instanceof PresetMountError) return undefined
+      throw error
     }
   }
 
@@ -1661,12 +1684,12 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
           })).agent
         }
 
+        const composition = await composeAgent(presetId)
         try {
           await mkdir(cwd, { recursive: true })
         } catch (error: unknown) {
           throw new Error(`failed to ensure project directory "${cwd}": ${String(error)}`, { cause: error })
         }
-        const composition = await composeAgent(presetId)
         return (await ctx.agents.create({
           sessionId,
           agentOptions: agentOptions(),
@@ -2261,6 +2284,8 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
           if (error instanceof SessionNotFound) {
             return err(request, { code: 'session-not-found', message: error.message, details: { sessionId } })
           }
+          const refused = presetFailure(request, error)
+          if (refused !== undefined) return refused
           return err(request, {
             code: 'internal',
             message: `history unavailable for session "${sessionId}": ${String(error)}`,
@@ -2418,7 +2443,18 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
         // those tools, and composing anything else would strand the tool calls
         // it already carries. Now that no model-facing row sits in the host
         // plane, composing nothing would leave the child with no tools at all.
-        const forkComposition = await composeAgent(resolveSessionPreset(source))
+        let forkComposition: Awaited<ReturnType<typeof composeAgent>>
+        try {
+          forkComposition = await composeAgent(resolveSessionPreset(source))
+        } catch (error) {
+          const refused = presetFailure(request, error)
+          if (refused !== undefined) return refused
+          return err(request, {
+            code: 'internal',
+            message: `failed to compose fork of session "${sessionId}": ${String(error)}`,
+            details: {},
+          })
+        }
         try {
           await ctx.agents.create({
             sessionId: childId,
@@ -2435,6 +2471,8 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
             setup: forkComposition.setup,
           })
         } catch (error: unknown) {
+          const refused = presetFailure(request, error)
+          if (refused !== undefined) return refused
           return err(request, {
             code: 'internal',
             message: `failed to fork session "${sessionId}": ${String(error)}`,
@@ -3091,6 +3129,19 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
             code: 'agent-preset-not-found',
             message: 'this deployment composes no agent presets',
             details: { agentPreset, available: [] },
+          })
+        }
+        try {
+          // Admission precedes identity resolution: a cold session must not be
+          // resumed merely to discover that desktop policy forbids the target.
+          await presets.resolve(agentPreset)
+        } catch (error) {
+          const refused = presetFailure(request, error)
+          if (refused !== undefined) return refused
+          return err(request, {
+            code: 'internal',
+            message: `failed to admit agent preset "${agentPreset}": ${String(error)}`,
+            details: {},
           })
         }
         const found = await agentFor(sessionId)

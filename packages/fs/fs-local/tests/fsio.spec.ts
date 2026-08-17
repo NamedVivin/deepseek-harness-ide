@@ -13,6 +13,7 @@ import { createServer } from 'node:net'
 import {
   applyLiteralEdit,
   listDirectory,
+  listDirectoryBounded,
   probe,
   probeNoFollow,
   readForEdit,
@@ -191,6 +192,19 @@ describe('listDirectory', () => {
     expect(entries.find(entry => entry.name === 'dir-skill')?.size).toBeUndefined()
   })
 
+  it('streams a complete bounded listing and stops at maxEntries plus one', async () => {
+    const root = join(dir, 'bounded')
+    await mkdir(root)
+    await writeFile(join(root, 'zeta.md'), 'zeta')
+    await writeFile(join(root, 'alpha.md'), 'alpha')
+    await mkdir(join(root, 'middle'))
+
+    const entries = await listDirectoryBounded(localTarget(root), { maxEntries: 3 })
+    expect(entries.map(entry => entry.name)).toEqual(['alpha.md', 'middle', 'zeta.md'])
+    await expect(listDirectoryBounded(localTarget(root), { maxEntries: 2 }))
+      .rejects.toMatchObject({ code: 'FS_TOO_LARGE' })
+  })
+
   it('derives child target keys from the listed parent identity', async () => {
     const realOne = join(dir, 'real-one')
     const realTwo = join(dir, 'real-two')
@@ -219,10 +233,16 @@ describe('listDirectory', () => {
 
   it('rejects missing, non-directory, and aborted listing requests', async () => {
     await expect(listDirectory(localTarget(join(dir, 'missing')))).rejects.toMatchObject({ code: 'FS_NOT_FOUND' })
+    await expect(listDirectoryBounded(localTarget(join(dir, 'missing')), { maxEntries: 1 }))
+      .rejects.toMatchObject({ code: 'FS_NOT_FOUND' })
     const file = join(dir, 'a.txt')
     await writeFile(file, 'hi')
     await expect(listDirectory(localTarget(file))).rejects.toMatchObject({ code: 'FS_NOT_DIRECTORY' })
+    await expect(listDirectoryBounded(localTarget(file), { maxEntries: 1 }))
+      .rejects.toMatchObject({ code: 'FS_NOT_DIRECTORY' })
     await expect(listDirectory(localTarget(dir), AbortSignal.abort())).rejects.toMatchObject({ code: 'FS_ABORTED' })
+    await expect(listDirectoryBounded(localTarget(dir), { maxEntries: 1 }, AbortSignal.abort()))
+      .rejects.toMatchObject({ code: 'FS_ABORTED' })
   })
 
   it('translates directory permission failures into FS_PERMISSION_DENIED', async () => {

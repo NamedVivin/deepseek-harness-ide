@@ -139,6 +139,10 @@ class RecordingFileSystem extends FileSystem {
     return []
   }
 
+  override async listDirBounded(_target: FsTarget, _options: { maxEntries: number }): Promise<FsDirEntry[]> {
+    return []
+  }
+
   override async writeText(_target: FsTarget, _content: string, _expected?: FsWriteIntent): Promise<FsWriteOutcome> {
     return { operation: 'update', version: FsVersion('unused'), before: '', after: _content }
   }

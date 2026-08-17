@@ -12,13 +12,11 @@ import { BashTerminalBackend } from '@deepseek-ai/dsh-terminal-bash'
 import * as ptyLocal from '@deepseek-ai/dsh-terminal-bash'
 import type { ResolvedConfig } from '@deepseek-ai/dsh-terminal-bash/src/config.ts'
 import type { LocalPtySession } from '@deepseek-ai/dsh-terminal-bash/src/session.ts'
-import { SubprocessRuntime } from '@deepseek-ai/dsh-subprocess'
+import { SubprocessPtyRuntime } from '@deepseek-ai/dsh-subprocess-pty'
 import type {
-  SubprocessHandle,
-  SubprocessSpawnSpec,
   SubprocessTerminalHandle,
   SubprocessTerminalSpawnSpec,
-} from '@deepseek-ai/dsh-subprocess'
+} from '@deepseek-ai/dsh-subprocess-pty'
 
 class EmptySandbox extends SandboxProvider {
   confine(_argv: readonly string[], _policy: SandboxPolicy): ConfinedArgv {
@@ -71,9 +69,7 @@ function terminalHandle(): SubprocessTerminalHandle {
   }
 }
 
-class StubSubprocessRuntime extends SubprocessRuntime {
-  async resolveExecutable(command: string): Promise<string> { return command }
-  spawn(_spec: SubprocessSpawnSpec): SubprocessHandle { throw new Error('unused') }
+class StubSubprocessRuntime extends SubprocessPtyRuntime {
   async spawnTerminal(_spec: SubprocessTerminalSpawnSpec): Promise<SubprocessTerminalHandle> {
     return terminalHandle()
   }
@@ -99,7 +95,7 @@ function stubLocalSession(initialize: () => Promise<void> = () => Promise.resolv
 }
 
 function registerStubLocalBackend(ctx: Context, createSession: () => LocalPtySession) {
-  return ctx.inject(['terminals', 'sandbox', 'sandboxPolicy', 'subprocess'], (providerCtx) => {
+  return ctx.inject(['terminals', 'sandbox', 'sandboxPolicy', 'subprocessPty'], (providerCtx) => {
     providerCtx.terminals.registerBackend(new BashTerminalBackend(
       providerCtx,
       { ...config(), backendType: 'stub' },
@@ -345,7 +341,7 @@ describe('terminal-bash plugin shape', () => {
     const loader = Object.create(Loader.prototype) as Loader
     const unwrapped = loader.unwrapExports(ptyLocal) as Record<string, unknown>
     expect(unwrapped.name).toBe('terminal-bash')
-    expect(unwrapped.inject).toEqual(['terminals', 'sandboxPolicy', 'subprocess'])
+    expect(unwrapped.inject).toEqual(['terminals', 'sandboxPolicy', 'subprocessPty'])
     expect(unwrapped.Config).toBeDefined()
   })
 

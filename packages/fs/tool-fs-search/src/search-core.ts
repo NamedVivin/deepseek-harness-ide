@@ -193,9 +193,9 @@ export function resolveRgPath(): Promise<string> {
  * {@link SearchError} (abort/timeout → `SEARCH_ABORTED`, invalid pattern →
  * `SEARCH_INVALID_PATTERN`, the rest → `SEARCH_FAILED` /
  * `SEARCH_RAW_OUTPUT_OVERFLOW`). Both launch-time failure domains are
- * classified: a synchronous throw at spawn CREATION (a NUL in argv, an abort
- * racing the pre-check, a rejected `@vscode/ripgrep` resolution) and a
- * rejection of `handle.done` (the seam's infrastructure failures) both become
+ * classified: a spawn rejection (a NUL in argv, an abort racing the pre-check,
+ * a rejected `@vscode/ripgrep` resolution) and a rejection of `handle.done`
+ * (a post-creation infrastructure failure) both become
  * `SEARCH_FAILED` with the original as `cause` — an abort already observed by
  * creation time becomes `SEARCH_ABORTED` instead.
  *
@@ -224,7 +224,7 @@ export async function runRipgrep(
   const workdir = cwd ?? process.cwd()
   let handle: SubprocessHandle
   try {
-    handle = ctx.subprocess.spawn({
+    handle = await ctx.subprocess.spawn({
       argv: [await resolveRgPath(), '--no-config', ...argv],
       cwd: workdir,
       stdio: {
@@ -236,9 +236,8 @@ export async function runRipgrep(
       signal: exec.signal,
     } satisfies SubprocessSpawnSpec)
   } catch (error: unknown) {
-    // Node's spawn() throws synchronously for a NUL in argv, and the local
-    // impl can throw synchronously when the signal aborts between the check
-    // above and this call (or when the platform-package resolution rejects).
+    // Process creation can reject when the signal aborts between the check
+    // above and this await or when platform-package resolution fails.
     // The static narrowing that proves this re-check "always false" cannot
     // see AbortSignal state changes.
     // oxlint-disable-next-line typescript/no-unnecessary-condition

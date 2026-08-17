@@ -144,23 +144,30 @@
 
     # ── browser plugin roster (dsh.client rows; node halves are layer-2 hosts) ──
 
-    # Dual-face: the node half scans this tree, composes window.__DSH_BOOT__,
-    # and serves /plugins/<id>/client.js; the browser half is the module table
+    # Web-only physical delivery for the stable module graph row below.
+    - id: module-delivery
+      name: '@deepseek-ai/dsh-client-modules-web'
+
+    # Dual-face: the node half scans this tree and composes window.__DSH_BOOT__;
+    # the selected module-delivery provider serves the assets. The browser half is the module table
     # the shell kernel constructs before cordis exists (adopted as a plugin
     # entry by the kernel, never fetched).
     - id: modules
       name: '@deepseek-ai/dsh-client-modules'
 
-    # Owns both ends of the web transport: node half binds the gateway to the
-    # webserver under /api; browser half is the fetch/SSE client.
-    - id: connection
-      name: '@deepseek-ai/dsh-client-connection'
+    # Web-only HTTP/WebSocket carrier for the stable Connection row below.
+    - id: connection-transport
+      name: '@deepseek-ai/dsh-client-connection-web'
       inject: [webRuntime]
       config:
         # LAN literals derived from the active bind plus --trusted-host extras.
         # A deployment adding authorities keeps this expression and concatenates
         # its literals, for example: ['app.internal', ...ctx.webRuntime.trustedHosts].
         trustedHosts: !!js ctx.webRuntime.trustedHosts
+
+    # Carrier-neutral RPC registry, dispatch, Client handle, and stream loop.
+    - id: connection
+      name: '@deepseek-ai/dsh-client-connection'
 
     - id: api-remotes
       name: '@deepseek-ai/dsh-api-remotes'

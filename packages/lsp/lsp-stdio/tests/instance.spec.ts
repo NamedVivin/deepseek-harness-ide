@@ -12,6 +12,7 @@ import type { ConnectionWriter } from '@deepseek-ai/dsh-lsp-stdio/src/connection
 import type { InstanceSpec } from '@deepseek-ai/dsh-lsp-stdio/src/instance.ts'
 import type { LspProviderQuery, LspQueryResult } from '@deepseek-ai/dsh-lsp'
 import { scrubbedParentEnv } from '@deepseek-ai/dsh-subprocess'
+import type { SubprocessHandle, SubprocessSpawnSpec } from '@deepseek-ai/dsh-subprocess'
 import { spawnSubprocess } from '@deepseek-ai/dsh-subprocess-local/src/spawn.ts'
 
 const fixtureServer = fileURLToPath(new URL('./fixture-server.ts', import.meta.url))
@@ -39,12 +40,24 @@ afterEach(async () => {
   await rm(root, { recursive: true, force: true })
 })
 
-function makeInstance(
+async function spawnReady(spec: SubprocessSpawnSpec): Promise<SubprocessHandle> {
+  const child = spawnSubprocess(spec)
+  try {
+    await child.ready
+    return child
+  } catch (error: unknown) {
+    await child.done.catch(() => undefined)
+    await child.waitForExit()
+    throw error
+  }
+}
+
+async function makeInstance(
   env: Record<string, string> = {},
   overrides: Partial<InstanceSpec> = {},
   writer?: ConnectionWriter,
-): LspInstance {
-  const instance = new LspInstance({
+): Promise<LspInstance> {
+  const instance = await LspInstance.create({
     command: process.execPath,
     args: [fixtureServer],
     cwd: ws,
@@ -57,7 +70,7 @@ function makeInstance(
     shutdownTimeoutMs: 200,
     killGraceMs: 200,
     ...overrides,
-  }, spawnSubprocess, writer)
+  }, spawnReady, writer)
   live.push(instance)
   return instance
 }
@@ -78,8 +91,8 @@ async function run(instance: LspInstance, operation: LspProviderQuery['operation
 }
 
 /** Build an instance whose "server" is an inline node script (for teardown-escalation control). */
-function scriptInstance(script: string, overrides: Partial<InstanceSpec> = {}): LspInstance {
-  const instance = new LspInstance({
+async function scriptInstance(script: string, overrides: Partial<InstanceSpec> = {}): Promise<LspInstance> {
+  const instance = await LspInstance.create({
     command: process.execPath,
     args: ['-e', script],
     cwd: ws,
@@ -92,7 +105,7 @@ function scriptInstance(script: string, overrides: Partial<InstanceSpec> = {}): 
     shutdownTimeoutMs: 150,
     killGraceMs: 150,
     ...overrides,
-  }, spawnSubprocess)
+  }, spawnReady)
   live.push(instance)
   return instance
 }
@@ -110,43 +123,43 @@ const locJson = () => JSON.stringify({ uri: pathToFileURL(join(ws, 'a.ts')).href
 
 describe('LspInstance server-request handling', () => {
   it('answers workspace/configuration with the static config per item', async () => {
-    const instance = makeInstance({ LSP_FAKE_ON_OPEN: 'configuration', LSP_FAKE_DEF: locJson() })
+    const instance = await makeInstance({ LSP_FAKE_ON_OPEN: 'configuration', LSP_FAKE_DEF: locJson() })
     // The query drives didOpen, which makes the fake emit workspace/configuration; a healthy answer
     // keeps the query working.
     await expect(run(instance, 'goToDefinition')).resolves.toMatchObject({ kind: 'locations' })
   })
 
   it('accepts a lifecycle client/registerCapability request', async () => {
-    const instance = makeInstance({ LSP_FAKE_ON_OPEN: 'lifecycle', LSP_FAKE_DEF: 'null' })
+    const instance = await makeInstance({ LSP_FAKE_ON_OPEN: 'lifecycle', LSP_FAKE_DEF: 'null' })
     await expect(run(instance, 'goToDefinition')).resolves.toEqual({ kind: 'locations', locations: [], resolvedWorkspaceUri: pathToFileURL(ws).href })
   })
 
   it('rejects a workspace/applyEdit request but keeps serving', async () => {
-    const instance = makeInstance({ LSP_FAKE_ON_OPEN: 'applyEdit', LSP_FAKE_DEF: 'null' })
+    const instance = await makeInstance({ LSP_FAKE_ON_OPEN: 'applyEdit', LSP_FAKE_DEF: 'null' })
     await expect(run(instance, 'goToDefinition')).resolves.toEqual({ kind: 'locations', locations: [], resolvedWorkspaceUri: pathToFileURL(ws).href })
   })
 
   it('rejects an unknown server request but keeps serving', async () => {
-    const instance = makeInstance({ LSP_FAKE_ON_OPEN: 'unknown', LSP_FAKE_DEF: 'null' })
+    const instance = await makeInstance({ LSP_FAKE_ON_OPEN: 'unknown', LSP_FAKE_DEF: 'null' })
     await expect(run(instance, 'goToDefinition')).resolves.toEqual({ kind: 'locations', locations: [], resolvedWorkspaceUri: pathToFileURL(ws).href })
   })
 })
 
 describe('LspInstance query and abort', () => {
   it('sends includeDeclaration for references', async () => {
-    const instance = makeInstance({ LSP_FAKE_REFS: JSON.stringify([JSON.parse(locJson())]) })
+    const instance = await makeInstance({ LSP_FAKE_REFS: JSON.stringify([JSON.parse(locJson())]) })
     await expect(run(instance, 'findReferences')).resolves.toMatchObject({ kind: 'locations' })
   })
 
   it('rejects a query aborted before it starts', async () => {
-    const instance = makeInstance({ LSP_FAKE_DEF: 'null' })
+    const instance = await makeInstance({ LSP_FAKE_DEF: 'null' })
     const controller = new AbortController()
     controller.abort(new Error('pre-abort'))
     await expect(run(instance, 'goToDefinition', controller.signal)).rejects.toThrow(/pre-abort/)
   })
 
   it('cancels an in-flight request on abort and rejects', async () => {
-    const instance = makeInstance({ LSP_FAKE_HANG: '1' })
+    const instance = await makeInstance({ LSP_FAKE_HANG: '1' })
     const controller = new AbortController()
     // Warm the instance first so the abort lands during the hanging request, not during startup.
     const pending = run(instance, 'goToDefinition', controller.signal)
@@ -158,7 +171,7 @@ describe('LspInstance query and abort', () => {
   it('terminates the instance when the server ignores $/cancelRequest past the grace', async () => {
     // The hang server never honors cancellation, so after the bounded grace the instance must be torn
     // down (its process closed) rather than left with an active request.
-    const instance = makeInstance({ LSP_FAKE_HANG: '1' }, { killGraceMs: 100 })
+    const instance = await makeInstance({ LSP_FAKE_HANG: '1' }, { killGraceMs: 100 })
     const controller = new AbortController()
     const pending = run(instance, 'goToDefinition', controller.signal)
     await new Promise<void>(resolve => setTimeout(resolve, 300))
@@ -179,7 +192,7 @@ describe('LspInstance query and abort', () => {
       + 'else if(m.method==="shutdown")process.stdout.write(fr({id:m.id,result:null}));'
       + 'else if(m.method==="exit")process.exit(0);'
       + '}});'
-    const instance = scriptInstance(script, { killGraceMs: 2_000 })
+    const instance = await scriptInstance(script, { killGraceMs: 2_000 })
     const controller = new AbortController()
     const pending = run(instance, 'goToDefinition', controller.signal)
     await new Promise<void>(resolve => setTimeout(resolve, 300))
@@ -193,7 +206,7 @@ describe('LspInstance query and abort', () => {
   it('observes abort while awaiting a slow initialize handshake', async () => {
     // A server that answers nothing (not even initialize) leaves `ready` pending; an abort must be
     // observed during that wait instead of hanging the tool-timeout signal.
-    const instance = scriptInstance('setInterval(()=>{},1000)', { killGraceMs: 100 })
+    const instance = await scriptInstance('setInterval(()=>{},1000)', { killGraceMs: 100 })
     const controller = new AbortController()
     const pending = run(instance, 'goToDefinition', controller.signal)
     await new Promise<void>(resolve => setTimeout(resolve, 150))
@@ -207,7 +220,7 @@ describe('LspInstance query and abort', () => {
     // keeps didOpen's write callback pending until cancellation forces bounded process teardown.
     await writeFile(join(ws, 'a.ts'), 'x'.repeat(2_000_000))
     const marker = join(root, 'initialized.log')
-    const instance = makeInstance({
+    const instance = await makeInstance({
       LSP_FAKE_INITIALIZED_MARKER: marker,
       LSP_FAKE_PAUSE_STDIN_AFTER_INITIALIZED: '1',
     }, {
@@ -225,7 +238,7 @@ describe('LspInstance query and abort', () => {
   })
 
   it('terminates when stdin fails during the didOpen write', async () => {
-    const instance = makeInstance({}, {
+    const instance = await makeInstance({}, {
       shutdownTimeoutMs: 100,
       killGraceMs: 100,
     }, failingWriter('textDocument/didOpen'))
@@ -234,7 +247,7 @@ describe('LspInstance query and abort', () => {
   })
 
   it('awaits process exit before rejecting a request write failure', async () => {
-    const instance = makeInstance({}, {
+    const instance = await makeInstance({}, {
       shutdownTimeoutMs: 100,
       killGraceMs: 100,
     }, failingWriter('textDocument/definition'))
@@ -245,20 +258,20 @@ describe('LspInstance query and abort', () => {
   })
 
   it('rejects when the server lacks the operation capability', async () => {
-    const instance = makeInstance({ LSP_FAKE_CAPS: JSON.stringify({ definitionProvider: false }), LSP_FAKE_DEF: 'null' })
+    const instance = await makeInstance({ LSP_FAKE_CAPS: JSON.stringify({ definitionProvider: false }), LSP_FAKE_DEF: 'null' })
     await expect(run(instance, 'goToDefinition')).rejects.toThrow(/does not support goToDefinition/)
   })
 
   it('propagates a server error response even when a signal is supplied (not an abort)', async () => {
     // A live signal is passed, but the request fails for a server reason; the catch must rethrow
     // without treating it as an abort.
-    const instance = makeInstance({ LSP_FAKE_ERROR: '1' })
+    const instance = await makeInstance({ LSP_FAKE_ERROR: '1' })
     const controller = new AbortController()
     await expect(run(instance, 'goToDefinition', controller.signal)).rejects.toThrow(/server refused/)
   })
 
   it('keeps a settled result but awaits teardown when didClose cannot be written', async () => {
-    const instance = makeInstance({
+    const instance = await makeInstance({
       LSP_FAKE_DEF: 'null',
     }, { shutdownTimeoutMs: 100, killGraceMs: 100 }, failingWriter('textDocument/didClose'))
     await expect(run(instance, 'goToDefinition')).resolves.toEqual({
@@ -273,7 +286,7 @@ describe('LspInstance query and abort', () => {
 describe('LspInstance disposal', () => {
   it('lets a server finish protocol exit before signal escalation', async () => {
     const marker = join(root, 'graceful-exit.log')
-    const instance = makeInstance({
+    const instance = await makeInstance({
       LSP_FAKE_DEF: 'null',
       LSP_FAKE_EXIT_DELAY_MS: '75',
       LSP_FAKE_EXIT_MARKER: marker,
@@ -284,21 +297,21 @@ describe('LspInstance disposal', () => {
   })
 
   it('is idempotent — a second dispose awaits close without error', async () => {
-    const instance = makeInstance({ LSP_FAKE_DEF: 'null' })
+    const instance = await makeInstance({ LSP_FAKE_DEF: 'null' })
     await run(instance, 'goToDefinition')
     await instance.dispose()
     await expect(instance.dispose()).resolves.toBeUndefined()
   })
 
   it('rejects a query after disposal', async () => {
-    const instance = makeInstance({ LSP_FAKE_DEF: 'null' })
+    const instance = await makeInstance({ LSP_FAKE_DEF: 'null' })
     await run(instance, 'goToDefinition')
     await instance.dispose()
     await expect(run(instance, 'goToDefinition')).rejects.toThrow(expect.objectContaining({ code: 'LSP_DISPOSED' }))
   })
 
   it('reports dead after the process closes', async () => {
-    const instance = makeInstance({ LSP_FAKE_DEF: 'null' })
+    const instance = await makeInstance({ LSP_FAKE_DEF: 'null' })
     await run(instance, 'goToDefinition')
     await instance.dispose()
     expect(instance.dead).toBe(true)
@@ -307,7 +320,7 @@ describe('LspInstance disposal', () => {
   it('escalates to SIGKILL when the server ignores shutdown and SIGTERM', async () => {
     // Server answers initialize, ignores shutdown, and traps SIGTERM so only SIGKILL stops it.
     const script = RESPONDING_SERVER + 'process.on("SIGTERM",()=>{});'
-    const instance = scriptInstance(script, { shutdownTimeoutMs: 100, killGraceMs: 100 })
+    const instance = await scriptInstance(script, { shutdownTimeoutMs: 100, killGraceMs: 100 })
     await run(instance, 'goToDefinition')
     await expect(instance.dispose()).resolves.toBeUndefined()
   })
@@ -319,7 +332,7 @@ describe('LspInstance disposal', () => {
       + `const helper=spawn(process.execPath,["-e",${JSON.stringify(helper)}],{stdio:"ignore"});`
       + `writeFileSync(${JSON.stringify(marker)},String(helper.pid));`
       + RESPONDING_SERVER
-    const instance = scriptInstance(script, { shutdownTimeoutMs: 100, killGraceMs: 100 })
+    const instance = await scriptInstance(script, { shutdownTimeoutMs: 100, killGraceMs: 100 })
     await run(instance, 'goToDefinition')
     const helperPid = Number(await readFile(marker, 'utf8'))
     try {
@@ -334,7 +347,7 @@ describe('LspInstance disposal', () => {
   })
 
   it('carries a non-Error abort reason as a generic aborted error', async () => {
-    const instance = makeInstance({ LSP_FAKE_HANG: '1' })
+    const instance = await makeInstance({ LSP_FAKE_HANG: '1' })
     const controller = new AbortController()
     const pending = run(instance, 'goToDefinition', controller.signal)
     await new Promise<void>(resolve => setTimeout(resolve, 200))

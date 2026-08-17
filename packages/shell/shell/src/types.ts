@@ -153,7 +153,7 @@ export interface ShellProcessRead {
 }
 
 /**
- * A background process handle returned by {@link ShellExecutor.start}. It is the
+ * A background process handle resolved by {@link ShellExecutor.start}. It is the
  * only access path; buffered output remains readable after exit. Composition
  * teardown (the subprocess service's disposal) kills running processes and
  * awaits {@link done}; an executor-only reload leaves them running.
@@ -165,7 +165,7 @@ export interface ShellProcess {
   exitCode: number | null
   /** Terminating signal name, when signal-killed. */
   signal: NodeJS.Signals | null
-  /** Resolves when the underlying process closes (never rejects — a spawn failure settles as `killed` with the error on stderr). */
+  /** Resolves when the underlying process closes; a post-creation monitoring failure settles as `killed` with the error on stderr. */
   readonly done: Promise<void>
   /** Sandbox facts, stamped once a confined process settles. */
   sandbox?: ShellSandboxInfo

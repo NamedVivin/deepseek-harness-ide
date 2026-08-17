@@ -1,19 +1,17 @@
-import { mkdtempSync, readFileSync, statSync, unlinkSync } from 'node:fs'
+import { mkdtempSync, readFileSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import {
   killGroup,
-  OutputCollector,
   spawnSubprocess,
   taskkillProcessTree,
 } from '../src/spawn.ts'
 import type { SubprocessHandle, SubprocessOutputReader } from '@deepseek-ai/dsh-subprocess'
 import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
 
-const { failNextClose, failNextUnlink } = vi.hoisted(() => ({
+const { failNextClose } = vi.hoisted(() => ({
   failNextClose: { value: false },
-  failNextUnlink: { value: false },
 }))
 vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs')>()
@@ -25,13 +23,6 @@ vi.mock('node:fs', async (importOriginal) => {
         throw Object.assign(new Error('simulated EIO on close'), { code: 'EIO' })
       }
       actual.closeSync(fd)
-    },
-    unlinkSync(path: Parameters<typeof actual.unlinkSync>[0]): void {
-      if (failNextUnlink.value) {
-        failNextUnlink.value = false
-        throw Object.assign(new Error('simulated EIO on unlink'), { code: 'EIO' })
-      }
-      actual.unlinkSync(path)
     },
   }
 })
@@ -430,107 +421,6 @@ describe('output truncation and spill', () => {
   })
 })
 
-describe('OutputCollector', () => {
-  it('keeps the tail of a single oversized chunk', () => {
-    const collector = new OutputCollector(10, 100, 'test', spillDir)
-    collector.push(Buffer.from('0123456789abcdef'))
-    const out = collector.finalize()
-    expect(out.text).toBe('6789abcdef')
-    expect(out.truncated).toBe(true)
-    expect(readFileSync(out.spillPath!, 'utf8')).toBe('0123456789abcdef')
-  })
-
-  it('retains a byte-exact tail across uneven chunk boundaries', () => {
-    // A diagnostic tail must be exactly the LAST maxBytes regardless of
-    // chunking; dropping only whole chunks would under-retain.
-    const collector = new OutputCollector(10, undefined, 'exact-tail', spillDir)
-    collector.push(Buffer.from('aaaa'))
-    collector.push(Buffer.from('bbbbbb'))
-    collector.push(Buffer.from('cc'))
-    const out = collector.finalize()
-    expect(out.text).toBe('aabbbbbbcc')
-    expect(Buffer.byteLength(out.text)).toBe(10)
-    expect(out.truncated).toBe(true)
-  })
-
-  it('readFrom returns increments and flags lossy reads', () => {
-    const collector = new OutputCollector(10, 100, 'test', spillDir)
-    collector.push(Buffer.from('aaaaa'))
-    const first = collector.readFrom(0)
-    expect(first.text).toBe('aaaaa')
-    expect(first.lossy).toBe(false)
-    expect(first.nextOffset).toBe(5)
-
-    collector.push(Buffer.from('bbbbb'))
-    const second = collector.readFrom(first.nextOffset)
-    expect(second.text).toBe('bbbbb')
-    expect(second.lossy).toBe(false)
-
-    // Push enough to slide the window past the last offset.
-    collector.push(Buffer.from('c'.repeat(20)))
-    const third = collector.readFrom(second.nextOffset)
-    expect(third.lossy).toBe(true)
-    expect(third.text).toBe('c'.repeat(10))
-    expect(third.spillPath).toBeDefined()
-  })
-
-  it('contains close failures and drops the spill path', () => {
-    const collector = new OutputCollector(4, 100, 'closefail', spillDir)
-    collector.push(Buffer.from('aaaa'))
-    collector.push(Buffer.from('bbbb'))
-    expect(collector.readFrom(0).spillPath).toBeDefined()
-
-    failNextClose.value = true
-    let out: ReturnType<typeof collector.finalize>
-    expect(() => { out = collector.finalize() }).not.toThrow()
-
-    expect(failNextClose.value).toBe(false)
-    expect(out!.text).toBe('bbbb')
-    expect(out!.truncated).toBe(true)
-    expect(out!.spillPath).toBeUndefined()
-  })
-
-  it('discards a spill that exceeds its configured cap', () => {
-    const collector = new OutputCollector(4, 8, 'bounded', spillDir)
-    collector.push(Buffer.from('aaaa'))
-    collector.push(Buffer.from('bbbb'))
-    const spillPath = collector.readFrom(0).spillPath!
-    expect(readFileSync(spillPath, 'utf8')).toBe('aaaabbbb')
-
-    collector.push(Buffer.from('c'))
-    collector.push(Buffer.from('dddd'))
-    const out = collector.finalize()
-    expect(out.text).toBe('dddd')
-    expect(out.truncated).toBe(true)
-    expect(out.spillPath).toBeUndefined()
-    expect(() => readFileSync(spillPath)).toThrow()
-  })
-
-  it('does not create a spill when the first overflowing chunk exceeds the cap', () => {
-    const collector = new OutputCollector(4, 4, 'no-spill', spillDir)
-    collector.push(Buffer.from('abcdefgh'))
-    const out = collector.finalize()
-    expect(out.text).toBe('efgh')
-    expect(out.truncated).toBe(true)
-    expect(out.spillPath).toBeUndefined()
-  })
-
-  it('contains cleanup failures while disabling an oversize spill', () => {
-    const collector = new OutputCollector(4, 8, 'cleanup-fail', spillDir)
-    collector.push(Buffer.from('aaaa'))
-    collector.push(Buffer.from('bbbb'))
-    const spillPath = collector.readFrom(0).spillPath!
-
-    failNextClose.value = true
-    failNextUnlink.value = true
-    expect(() => { collector.push(Buffer.from('c')) }).not.toThrow()
-    expect(failNextClose.value).toBe(false)
-    expect(failNextUnlink.value).toBe(false)
-    expect(collector.finalize().spillPath).toBeUndefined()
-    unlinkSync(spillPath)
-  })
-})
-
 describe('killGroup', () => {
   it('ignores non-positive pids', () => {
     expect(() => { killGroup(-1, 'SIGTERM') }).not.toThrow()
@@ -711,7 +601,7 @@ describe('tree-survivor escalation (terminate and bounded waits reach helpers th
     const fiber = await ctx.plugin(LocalSubprocessRuntime)
     ;(ctx.subprocess as InstanceType<typeof LocalSubprocessRuntime>).internals = { spillDir }
     const pidFile = join(spillDir, `survivor-svc-${Date.now()}.pid`)
-    const running = ctx.subprocess.spawn(spec(
+    const running = await ctx.subprocess.spawn(spec(
       `bash -c 'trap "" TERM; echo $$ > ${pidFile}; sleep 60' >/dev/null 2>&1 & disown; exit 0`,
       { graceMs: 200 },
     ))
@@ -735,6 +625,7 @@ describe('coverage seams', () => {
 
   it('a spawn-failed handle rejects done while waitForExit reports gone', async () => {
     const running = spawnSubprocess(spec('true', { cwd: '/nonexistent-dir-dsh-dispose-test' }))
+    expect(() => running.pid).toThrow('before successful creation')
     await expect(running.done).rejects.toThrow()
     await expect(running.waitForExit()).resolves.toBe(true)
   })

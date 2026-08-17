@@ -12,20 +12,10 @@ import { constants } from 'node:fs'
 import { access, stat } from 'node:fs/promises'
 import { delimiter, extname, isAbsolute, resolve } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
-import * as nodePty from 'node-pty'
-import type { IPtyForkOptions } from 'node-pty'
 import { SubprocessRuntime } from '@deepseek-ai/dsh-subprocess'
-import type {
-  SubprocessHandle,
-  SubprocessSpawnSpec,
-  SubprocessTerminalHandle,
-  SubprocessTerminalSpawnSpec,
-} from '@deepseek-ai/dsh-subprocess'
+import type { SubprocessHandle, SubprocessSpawnSpec } from '@deepseek-ai/dsh-subprocess'
 import { childEnv, spawnSubprocess } from './spawn.ts'
 import type { LocalSubprocessHandle, SpawnInternals } from './spawn.ts'
-import { createProcessInspector } from './process-inspector.ts'
-import type { ProcessInspector } from './process-inspector.ts'
-import { LocalTerminalHandle } from './terminal.ts'
 
 /**
  * Local subprocess service: detached process trees, Node-shaped stdio
@@ -37,12 +27,9 @@ import { LocalTerminalHandle } from './terminal.ts'
 export class LocalSubprocessRuntime extends SubprocessRuntime {
   /** Live handles retained for normal disposal and synchronous host-exit finalization. */
   private live = new Set<LocalSubprocessHandle>()
-  /** Live terminals retained through normal quiescence or host-exit finalization. */
-  private terminals = new Set<LocalTerminalHandle>()
   /** Test hook: spill and platform knobs forwarded to spawnSubprocess. */
   internals: SpawnInternals = {}
-  /** Test hook for platform process inspection; production resolves lazily on terminal spawn. */
-  terminalInspector: ProcessInspector | undefined
+  private disposing = false
 
   constructor(ctx: Context) {
     super(ctx)
@@ -50,6 +37,7 @@ export class LocalSubprocessRuntime extends SubprocessRuntime {
       const onHostExit = (): void => { this.terminateForHostExit() }
       process.prependListener('exit', onHostExit)
       return async () => {
+        this.disposing = true
         try {
           await this.disposeManagedProcesses()
         } finally {
@@ -67,13 +55,6 @@ export class LocalSubprocessRuntime extends SubprocessRuntime {
         // Host exit cannot await or report one target; continue with the rest.
       }
     }
-    for (const terminal of this.terminals) {
-      try {
-        terminal.terminateForHostExit()
-      } catch (_terminalTerminationFailed) {
-        // One terminal must not prevent final termination of another target.
-      }
-    }
   }
 
   private async disposeManagedProcesses(): Promise<void> {
@@ -84,11 +65,8 @@ export class LocalSubprocessRuntime extends SubprocessRuntime {
     const pending: Promise<unknown>[] = []
     for (const handle of this.live) {
       handle.terminate()
-      // Spawn-failure rejections already settled and left the live set.
+      // Creation failures settle both readiness and direct-child observation.
       pending.push(handle.done.catch(() => {}).then(() => handle.waitForExit()))
-    }
-    for (const terminal of this.terminals) {
-      pending.push(terminal.terminate())
     }
     const outcomes = await Promise.allSettled(pending)
     const failures = outcomes.flatMap<unknown>(outcome => outcome.status === 'rejected'
@@ -96,7 +74,6 @@ export class LocalSubprocessRuntime extends SubprocessRuntime {
       : [])
     if (failures.length > 0) this.terminateForHostExit()
     this.live.clear()
-    this.terminals.clear()
     if (failures.length === 1) throw failures[0]
     if (failures.length > 1) throw new AggregateError(failures, 'local subprocess teardown failed')
   }
@@ -143,7 +120,10 @@ export class LocalSubprocessRuntime extends SubprocessRuntime {
       extensions.map(extension => resolve(process.cwd(), directory, command + extension)))
   }
 
-  spawn(spec: SubprocessSpawnSpec): SubprocessHandle {
+  // Node returns its ChildProcess object synchronously; publication waits for
+  // the spawn event that confirms a positive process id.
+  async spawn(spec: SubprocessSpawnSpec): Promise<SubprocessHandle> {
+    if (this.disposing) throw new Error('subprocess-local: service is disposing')
     const handle = spawnSubprocess(spec, this.internals)
     this.live.add(handle)
     // Release ownership only once the whole TREE is gone, not at direct-child
@@ -153,35 +133,23 @@ export class LocalSubprocessRuntime extends SubprocessRuntime {
     const release = (): Promise<void> =>
       handle.waitForExit().then(() => { this.live.delete(handle) })
     handle.done.then(release, release)
+    try {
+      await handle.ready
+    } catch (error: unknown) {
+      await handle.done.catch(() => undefined)
+      await handle.waitForExit()
+      throw error
+    }
+    // oxlint-disable-next-line typescript/no-unnecessary-condition -- process creation yields to service disposal.
+    if (this.disposing) {
+      handle.terminate()
+      await handle.waitForExit()
+      await handle.done.catch(() => undefined)
+      throw new Error('subprocess-local: service disposed during process setup')
+    }
     return handle
   }
 
-  // Local PTY allocation is synchronous, but the provider contract permits remote asynchronous allocation.
-  // oxlint-disable-next-line typescript/require-await -- Preserve promise rejection semantics at the async provider contract.
-  async spawnTerminal(spec: SubprocessTerminalSpawnSpec): Promise<SubprocessTerminalHandle> {
-    const file = spec.argv[0]
-    if (file === undefined || file.length === 0) {
-      throw new Error('subprocess-local: terminal argv must contain a program')
-    }
-    spec.signal?.throwIfAborted()
-    const options: IPtyForkOptions = {
-      name: 'dumb',
-      rows: spec.rows,
-      cols: spec.cols,
-      cwd: spec.cwd,
-      env: childEnv(spec.env),
-    }
-    const inspector = this.terminalInspector ?? createProcessInspector()
-    const terminal = nodePty.spawn(file, [...spec.argv.slice(1)], options)
-    const handle = new LocalTerminalHandle(terminal, inspector, spec.graceMs)
-    this.terminals.add(handle)
-    const release = async (): Promise<void> => {
-      await handle.terminate()
-      this.terminals.delete(handle)
-    }
-    void handle.done.then(release, release).catch(() => {})
-    return handle
-  }
 }
 
 /** Read a Windows environment key using the platform's case-insensitive semantics. */
@@ -193,3 +161,5 @@ function environmentValue(env: NodeJS.ProcessEnv, name: 'PATH' | 'PATHEXT'): str
 }
 
 export default LocalSubprocessRuntime
+
+export { childEnv } from './spawn.ts'

@@ -8,6 +8,7 @@ import type {} from '@deepseek-ai/dsh-fs-e2b'
 import type {} from '@deepseek-ai/dsh-bash-local'
 import type {} from '@deepseek-ai/dsh-lsp-stdio'
 import type {} from '@deepseek-ai/dsh-terminal-bash'
+import type {} from '@deepseek-ai/dsh-subprocess-pty-e2b'
 
 const configPath = process.argv[2]
 if (configPath === undefined) throw new Error('usage: bin.ts <cordis.yml>')
@@ -58,7 +59,7 @@ try {
   const fromBash = await ctx.fs.resolve('from-bash.txt')
   const fsRead = await ctx.fs.readText(fromBash)
 
-  const environmentHandle = ctx.subprocess.spawn({
+  const environmentHandle = await ctx.subprocess.spawn({
     argv: ['env'],
     cwd: process.cwd(),
     stdio: { stdin: 'ignore', stdout: { maxBytes: 65_536 }, stderr: { maxBytes: 4_096 } },
@@ -82,7 +83,7 @@ try {
   ].every(entry => environmentLines.has(entry))
   if (!explicitEnvironment) throw new Error(`E2B subprocess dropped an explicit environment entry: ${environmentText}`)
 
-  const splitUtf8Handle = ctx.subprocess.spawn({
+  const splitUtf8Handle = await ctx.subprocess.spawn({
     argv: ['bash', '-c', "printf '\\344'; sleep 0.05; printf '\\275'; sleep 0.05; printf '\\240'; sleep 0.05; printf '\\345'; sleep 0.05; printf '\\245'; sleep 0.05; printf '\\275'"],
     cwd: process.cwd(),
     stdio: { stdin: 'ignore', stdout: { maxBytes: 32 }, stderr: { maxBytes: 4_096 } },
@@ -96,7 +97,7 @@ try {
   }
 
   const outputDrainStarted = Date.now()
-  const outputDrainHandle = ctx.subprocess.spawn({
+  const outputDrainHandle = await ctx.subprocess.spawn({
     argv: ['bash', '-c', "bash -c 'exec -a dsh-output-drain-descendant sleep 30' & printf 'leader-done\\n'"],
     cwd: process.cwd(),
     stdio: { stdin: 'ignore', stdout: { maxBytes: 64 }, stderr: { maxBytes: 4_096 } },

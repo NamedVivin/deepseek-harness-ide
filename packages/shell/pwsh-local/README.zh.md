@@ -34,7 +34,7 @@
 - **受管进程组之上的配置预算**——`resolve()` 从配置填充 `workdir`/`timeoutMs`/`stdoutMaxBytes`，每次 spawn 都向服务提供显式字节上限、spill 上限与 `graceMs`。该宽限期须为正有限值，且不得大于 [`MAX_TIMER_DELAY_MS`](../../util/timeout/README.md)，这样 Node 就能用一个定时器表示它。进程树终止（Windows 用 taskkill，POSIX 用进程组信号）、退出后管道排空宽限、保尾截断与有界 spill 文件是 [`dsh-subprocess-local`](../../subprocess/subprocess-local/README.md) 的机制。前台 `ShellExecRequest.stdoutMaxBytes` 可为单个受信调用方提高 stdout 捕获预算；stderr 与后台运行仍使用 `maxOutputBytes`。
 - **超时与取消分类**——`run()` 通过一个 deadline 融合按配置上限截取的超时与调用方信号；只有执行器自身超时报告 `timedOut`，上游取消报告 `aborted`，自我终止的命令两者都不报告（见 [timeout 库 Agent Note](../../../.agents/notes/implemented/architecture/2026-07-06-timeout-deadline-library.md)）。Windows 将强制终止报告为退出码 1 且无信号，因此带信号标记的事实（`signal`、`killed` 状态）在那里仅限 POSIX；超时/取消分类与平台无关。
 - **面向模型的终端环境**——`NO_COLOR=1 PAGER=cat GIT_PAGER=cat`（没有 `TERM=dumb`：那是 POSIX 概念；现代 PowerShell 渲染器遵循 `NO_COLOR`），作为普通 env 在服务的凭据清理与 `DSH_*` 通道规则之下合并；显式调用方条目仍然优先。
-- **后台进程**——`start()` 立即返回存活的 `ShellProcess` 句柄，不设超时；句柄的 `readOutput()` 把服务基于偏移的 stdout/stderr 读取合并为一条按分段标记、通过消费游标推进的增量。仍在运行的进程属于 subprocess 服务，因此它跨执行器重载存活，并随服务 dispose（被终止并 join）。一切任务相关职责（job id、所有权、轮询、通知）都在通用 [`ctx.jobs` 运行时](../../jobs/jobs/README.md) 中，由工具层把句柄注册进去——本执行器从不接触会话或注册表。
+- **后台进程**——只有在 `ctx.subprocess.spawn()` 发布正进程 ID 与提供方所有权后，`start()` 才 resolve 为存活的 `ShellProcess`；创建失败会直接 reject，不返回进程句柄。创建后不设超时。句柄的 `readOutput()` 把服务基于偏移的 stdout/stderr 读取合并为一条按分段标记、通过消费游标推进的增量。仍在运行的进程属于 subprocess 服务，因此它跨执行器重载存活，并随服务 dispose（被终止并 join）。一切任务相关职责（job id、所有权、轮询、通知）都在通用 [`ctx.jobs` 运行时](../../jobs/jobs/README.md) 中，由工具层把句柄注册进去——本执行器从不接触会话或注册表。
 
 ## 模型体验
 
@@ -49,7 +49,7 @@
 - **自身不设沙箱**——本执行器始终以 harness 进程的权限运行命令；需要隔离的部署应组合启用沙箱的 bash 执行器或策略。
 - **无持久 shell 或 PTY**——每次调用都是全新的 `pwsh -Command`。
 - **命令字符串是 PowerShell 文本**——`-Command` 域没有 shell 引号层，但面向模型的命令由 PowerShell 自己解析，因此 PowerShell 语法错误是命令失败，而非启动失败。
-- **后台 spawn 失败提示只投递一次**——subprocess 服务不会为从未运行的进程缓冲输出，因此执行器只把 `spawn failed: …` 注入一次 `readOutput()` 增量；丢弃该增量的读取方无法恢复它。
+- **创建后进程观察失败提示只投递一次**——`start()` resolve 后，如果 subprocess 的 `done` reject，`ShellProcess` 会以 `killed` 结算；如果没有保留的 stderr，执行器会把 `process failed: …` 注入一次 `readOutput()` 增量。丢弃该增量的读取方无法恢复它。
 - **Windows 终止不报告信号**——被强制终止的进程以退出码 1、`signal: null` 结束，因此基于信号的状态分类（POSIX `killed`）在 Windows 上不适用；`kill()` 发起的停止仍会直接标记为 `killed`。
 - **编码 preamble 位于命令之前**——PowerShell 要求 `param(...)`、`#requires` 与 `using namespace`/`using assembly` 语句位于脚本最顶部，因此以其中一种开头的命令无法在 UTF-8 输出 preamble 下运行。`param(...)` 脚本可包进 `& { … }`（param 块可以合法地位于脚本块开头）；`using` 语句与 `#requires` 在命令内没有变通办法（`#requires` 在 `-Command` 中无论位置如何都不生效）——此类脚本请改从文件运行。
 - **Windows PowerShell 5.1 下的非 ASCII stdin 可能被错误解码**——preamble 只固定输出编码；`[Console]::InputEncoding` 保持主机默认，因为在重定向 stdin 下设置它会抛出异常。pwsh 7 默认 UTF-8，不受影响。

@@ -233,7 +233,7 @@ describe('conversation slot inject API', () => {
   it('openFile (chat view face) resolves against session cwd and calls workspaces.openPath', async () => {
     const b = await bench()
     const { injected } = b.chatViewApi(ROOT)
-    injected.openFile('src/a.ts')
+    await injected.openFile({ path: 'src/a.ts', line: 7 })
     await vi.waitFor(() => {
       expect(b.runtime.workspaces.calls).toContainEqual({ method: 'openPath', args: ['/proj/src/a.ts'] })
     })

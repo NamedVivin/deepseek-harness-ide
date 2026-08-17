@@ -50,7 +50,7 @@ export interface CodexRunSpec {
   /** Subprocess termination grace passed to the shared process-tree owner. */
   readonly disposeGraceMs: number
   /** Shared subprocess service spawn operation. */
-  readonly spawn: (spec: SubprocessSpawnSpec) => SubprocessHandle
+  readonly spawn: (spec: SubprocessSpawnSpec) => Promise<SubprocessHandle>
   /** Diagnostic sink for a post-publication error flattened into a result. */
   readonly onError?: (error: Error, stopReason: SubagentStopReason) => void
 }
@@ -93,10 +93,6 @@ export async function disposeCodexChild(
   child: SubprocessHandle,
 ): Promise<void> {
   wire.close()
-  if (child.pid <= 0) {
-    await child.done.catch(() => {})
-    return
-  }
   try {
     child.stdin?.end()
   } catch {
@@ -122,7 +118,7 @@ export async function startCodexRun(
     throw new Error('subagent-codex: request was aborted before app-server startup')
   }
 
-  const child = spec.spawn({
+  const child = await spec.spawn({
     argv: codexAppServerArgv(),
     cwd: spec.cwd,
     stdio: { stdin: 'pipe', stdout: 'pipe', stderr: 'inherit' },

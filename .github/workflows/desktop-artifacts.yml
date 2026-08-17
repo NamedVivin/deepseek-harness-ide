@@ -1,0 +1,357 @@
+name: Desktop Artifacts
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - apps/desktop/**
+      - packages/client/**
+      - packages/host/**
+      - packages/subprocess/**
+      - packages/bundle/desktop-app/**
+      - packages/bundle/ide-app/**
+      - .github/workflows/desktop-artifacts.yml
+      - scripts/gen-third-party-notices.ts
+      - scripts/gen-third-party-notices.spec.ts
+      - LICENSE
+      - THIRD_PARTY_NOTICES.md
+      - package.json
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+  pull_request:
+    paths:
+      - apps/desktop/**
+      - packages/client/**
+      - packages/host/**
+      - packages/subprocess/**
+      - packages/bundle/desktop-app/**
+      - packages/bundle/ide-app/**
+      - .github/workflows/desktop-artifacts.yml
+      - scripts/gen-third-party-notices.ts
+      - scripts/gen-third-party-notices.spec.ts
+      - LICENSE
+      - THIRD_PARTY_NOTICES.md
+      - package.json
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+  workflow_dispatch:
+    inputs:
+      verification:
+        description: Build an unsigned rehearsal or a signed candidate. Neither mode publishes.
+        required: true
+        type: choice
+        default: unsigned
+        options:
+          - unsigned
+          - signed
+      windows_baseline_run_id:
+        description: Prior lower-version signed-candidate run containing desktop-windows-x64; required for a signed upgrade smoke.
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  BUILD_NODE_VERSION: '24.16.0'
+  DESKTOP_NODE_VERSION: 'v24.16.0'
+  DESKTOP_ELECTRON_VERSION: '43.2.0'
+  DSH_TELEMETRY_DISABLED: '1'
+
+jobs:
+  static:
+    name: Desktop release scripts
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v4
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.BUILD_NODE_VERSION }}
+
+      - name: Install (immutable)
+        run: pnpm install --frozen-lockfile
+
+      - name: Run release artifact tests
+        run: pnpm exec vitest run apps/desktop/tests/assembly.spec.ts apps/desktop/tests/release-artifacts.spec.ts
+
+      - name: Check packaged license inventory
+        run: pnpm exec tsx scripts/gen-third-party-notices.ts --check
+
+      - name: Check native scripts
+        run: |
+          bash -n apps/desktop/scripts/verify-macos-artifacts.sh
+          bash -n apps/desktop/scripts/smoke-macos-lifecycle.sh
+          git diff --check
+
+  native:
+    name: ${{ matrix.target }} / ${{ github.event_name == 'workflow_dispatch' && inputs.verification == 'signed' && 'signed' || 'unsigned' }}
+    needs: static
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: macos-arm64
+            runner: macos-15
+            platform: macos
+            node_archive: node-v24.16.0-darwin-arm64.tar.gz
+            electron_archive: electron-v43.2.0-darwin-arm64.zip
+          - target: macos-x64
+            runner: macos-15-intel
+            platform: macos
+            node_archive: node-v24.16.0-darwin-x64.tar.gz
+            electron_archive: electron-v43.2.0-darwin-x64.zip
+          - target: windows-x64
+            runner: windows-2025
+            platform: windows
+            node_archive: node-v24.16.0-win-x64.zip
+            electron_archive: electron-v43.2.0-win32-x64.zip
+    env:
+      DSH_DESKTOP_SIGNATURE_POLICY: ${{ github.event_name == 'workflow_dispatch' && inputs.verification == 'signed' && 'signed' || 'unsigned' }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v4
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.BUILD_NODE_VERSION }}
+
+      - name: Install (immutable)
+        run: pnpm install --frozen-lockfile
+
+      - name: Configure macOS candidate credentials
+        if: matrix.platform == 'macos' && env.DSH_DESKTOP_SIGNATURE_POLICY == 'signed'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_API_KEY_P8_BASE64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
+          APPLE_API_KEY_ID_SECRET: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_SECRET: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_SIGN_IDENTITY_SECRET: ${{ secrets.APPLE_SIGN_IDENTITY }}
+        run: |
+          required=(APPLE_CERTIFICATE_P12_BASE64 APPLE_CERTIFICATE_PASSWORD APPLE_API_KEY_P8_BASE64 APPLE_API_KEY_ID_SECRET APPLE_API_ISSUER_SECRET APPLE_SIGN_IDENTITY_SECRET)
+          for name in "${required[@]}"; do
+            if [[ -z ${!name} ]]; then echo "desktop release: missing $name" >&2; exit 1; fi
+          done
+          certificate="$RUNNER_TEMP/desktop-signing.p12"
+          api_key="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID_SECRET}.p8"
+          keychain="$RUNNER_TEMP/desktop-signing.keychain-db"
+          keychain_password=$(openssl rand -hex 24)
+          echo "APPLE_API_KEY=$api_key" >> "$GITHUB_ENV"
+          echo "APPLE_API_KEY_ID=$APPLE_API_KEY_ID_SECRET" >> "$GITHUB_ENV"
+          echo "APPLE_API_ISSUER=$APPLE_API_ISSUER_SECRET" >> "$GITHUB_ENV"
+          echo "APPLE_SIGN_IDENTITY=$APPLE_SIGN_IDENTITY_SECRET" >> "$GITHUB_ENV"
+          echo "DSH_DESKTOP_SIGNING_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+          printf '%s' "$APPLE_CERTIFICATE_P12_BASE64" | base64 --decode > "$certificate"
+          printf '%s' "$APPLE_API_KEY_P8_BASE64" | base64 --decode > "$api_key"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$certificate" -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain"
+          security list-keychains -d user -s "$keychain" login.keychain-db
+          security find-identity -v -p codesigning "$keychain"
+
+      - name: Configure Windows candidate credentials
+        if: matrix.platform == 'windows' && env.DSH_DESKTOP_SIGNATURE_POLICY == 'signed'
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE_PFX_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_PFX_BASE64 }}
+          WINDOWS_CERTIFICATE_PASSWORD_SECRET: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_PFX_BASE64)) { throw 'desktop release: missing WINDOWS_CERTIFICATE_PFX_BASE64' }
+          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_PASSWORD_SECRET)) { throw 'desktop release: missing WINDOWS_CERTIFICATE_PASSWORD' }
+          $certificate = Join-Path $env:RUNNER_TEMP 'desktop-signing.pfx'
+          [IO.File]::WriteAllBytes($certificate, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_PFX_BASE64))
+          Add-Content -LiteralPath $env:GITHUB_ENV -Value "WINDOWS_CERTIFICATE_FILE=$certificate"
+          Add-Content -LiteralPath $env:GITHUB_ENV -Value "WINDOWS_CERTIFICATE_PASSWORD=$($env:WINDOWS_CERTIFICATE_PASSWORD_SECRET)"
+          Add-Content -LiteralPath $env:GITHUB_ENV -Value 'WINDOWS_TIMESTAMP_SERVER=http://timestamp.digicert.com'
+
+      - name: Download and verify official Node.js runtime
+        if: matrix.platform == 'macos'
+        shell: bash
+        run: |
+          release_url="https://nodejs.org/dist/${DESKTOP_NODE_VERSION}"
+          archive="$RUNNER_TEMP/${{ matrix.node_archive }}"
+          shasums="$RUNNER_TEMP/SHASUMS256.txt"
+          runtime_parent="$RUNNER_TEMP/node-runtime"
+          curl --fail --location --proto '=https' --tlsv1.2 --retry 3 --output "$shasums" "$release_url/SHASUMS256.txt"
+          curl --fail --location --proto '=https' --tlsv1.2 --retry 3 --output "$archive" "$release_url/${{ matrix.node_archive }}"
+          expected=$(awk -v file='${{ matrix.node_archive }}' '$2 == file { print $1 }' "$shasums")
+          [[ $expected =~ ^[0-9a-f]{64}$ ]] || { echo 'desktop release: official SHASUMS256 row is missing or ambiguous' >&2; exit 1; }
+          actual=$(shasum -a 256 "$archive" | awk '{ print $1 }')
+          [[ $actual == "$expected" ]] || { echo 'desktop release: Node.js archive digest mismatch' >&2; exit 1; }
+          mkdir "$runtime_parent"
+          tar -xzf "$archive" -C "$runtime_parent"
+          echo "DSH_DESKTOP_NODE_RUNTIME_ROOT=$runtime_parent/${{ matrix.node_archive }}" | sed 's/\.tar\.gz$//' >> "$GITHUB_ENV"
+          echo "DSH_DESKTOP_NODE_ARCHIVE=$archive" >> "$GITHUB_ENV"
+          echo "DSH_DESKTOP_NODE_SHASUMS=$shasums" >> "$GITHUB_ENV"
+
+      - name: Download and verify official Node.js runtime
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $releaseUrl = "https://nodejs.org/dist/$($env:DESKTOP_NODE_VERSION)"
+          $archive = Join-Path $env:RUNNER_TEMP '${{ matrix.node_archive }}'
+          $shasums = Join-Path $env:RUNNER_TEMP 'SHASUMS256.txt'
+          $runtimeParent = Join-Path $env:RUNNER_TEMP 'node-runtime'
+          Invoke-WebRequest -Uri "$releaseUrl/SHASUMS256.txt" -OutFile $shasums
+          Invoke-WebRequest -Uri "$releaseUrl/${{ matrix.node_archive }}" -OutFile $archive
+          $matches = @(Get-Content -LiteralPath $shasums | Where-Object { $_ -match "^([0-9a-f]{64})  $([regex]::Escape('${{ matrix.node_archive }}'))$" })
+          if ($matches.Count -ne 1) { throw 'desktop release: official SHASUMS256 row is missing or ambiguous' }
+          $expected = $matches[0].Substring(0, 64)
+          $actual = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) { throw 'desktop release: Node.js archive digest mismatch' }
+          Expand-Archive -LiteralPath $archive -DestinationPath $runtimeParent
+          Add-Content -LiteralPath $env:GITHUB_ENV -Value "DSH_DESKTOP_NODE_RUNTIME_ROOT=$runtimeParent\node-v24.16.0-win-x64"
+          Add-Content -LiteralPath $env:GITHUB_ENV -Value "DSH_DESKTOP_NODE_ARCHIVE=$archive"
+          Add-Content -LiteralPath $env:GITHUB_ENV -Value "DSH_DESKTOP_NODE_SHASUMS=$shasums"
+
+      - name: Download and verify official Electron distribution
+        if: matrix.platform == 'macos'
+        shell: bash
+        run: |
+          release_url="https://github.com/electron/electron/releases/download/v${DESKTOP_ELECTRON_VERSION}"
+          zip_dir="$RUNNER_TEMP/electron-zip"
+          archive="$zip_dir/${{ matrix.electron_archive }}"
+          shasums="$RUNNER_TEMP/electron-SHASUMS256.txt"
+          mkdir "$zip_dir"
+          curl --fail --location --proto '=https' --tlsv1.2 --retry 3 --output "$shasums" "$release_url/SHASUMS256.txt"
+          curl --fail --location --proto '=https' --tlsv1.2 --retry 3 --output "$archive" "$release_url/${{ matrix.electron_archive }}"
+          expected=$(awk -v file='${{ matrix.electron_archive }}' '$2 == file || $2 == "*" file { print $1 }' "$shasums")
+          [[ $expected =~ ^[0-9a-f]{64}$ ]] || { echo 'desktop release: official Electron SHASUMS256 row is missing or ambiguous' >&2; exit 1; }
+          actual=$(shasum -a 256 "$archive" | awk '{ print $1 }')
+          [[ $actual == "$expected" ]] || { echo 'desktop release: Electron archive digest mismatch' >&2; exit 1; }
+          echo "DSH_DESKTOP_ELECTRON_ZIP_DIR=$zip_dir" >> "$GITHUB_ENV"
+          echo "DSH_DESKTOP_ELECTRON_SHASUMS=$shasums" >> "$GITHUB_ENV"
+
+      - name: Download and verify official Electron distribution
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $releaseUrl = "https://github.com/electron/electron/releases/download/v$($env:DESKTOP_ELECTRON_VERSION)"
+          $zipDir = Join-Path $env:RUNNER_TEMP 'electron-zip'
+          $archive = Join-Path $zipDir '${{ matrix.electron_archive }}'
+          $shasums = Join-Path $env:RUNNER_TEMP 'electron-SHASUMS256.txt'
+          New-Item -ItemType Directory -Path $zipDir | Out-Null
+          Invoke-WebRequest -Uri "$releaseUrl/SHASUMS256.txt" -OutFile $shasums
+          Invoke-WebRequest -Uri "$releaseUrl/${{ matrix.electron_archive }}" -OutFile $archive
+          $escapedArchive = [regex]::Escape('${{ matrix.electron_archive }}')
+          $matches = @(Get-Content -LiteralPath $shasums | Where-Object { $_ -match "^([0-9a-f]{64})\s+\*?$escapedArchive$" })
+          if ($matches.Count -ne 1) { throw 'desktop release: official Electron SHASUMS256 row is missing or ambiguous' }
+          $expected = $matches[0].Substring(0, 64)
+          $actual = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) { throw 'desktop release: Electron archive digest mismatch' }
+          Add-Content -LiteralPath $env:GITHUB_ENV -Value "DSH_DESKTOP_ELECTRON_ZIP_DIR=$zipDir"
+          Add-Content -LiteralPath $env:GITHUB_ENV -Value "DSH_DESKTOP_ELECTRON_SHASUMS=$shasums"
+
+      - name: Build repository artifacts
+        run: pnpm run build
+
+      - name: Make native desktop artifacts
+        run: pnpm --filter @deepseek-ai/dsh-desktop run make
+
+      - name: Verify assembled payload
+        shell: bash
+        if: matrix.platform == 'macos'
+        run: pnpm exec tsx apps/desktop/scripts/verify-artifacts.ts --target '${{ matrix.target }}' --out apps/desktop/out --report "$RUNNER_TEMP/desktop-report.json"
+
+      - name: Verify assembled payload
+        shell: pwsh
+        if: matrix.platform == 'windows'
+        run: pnpm exec tsx apps/desktop/scripts/verify-artifacts.ts --target '${{ matrix.target }}' --out apps/desktop/out --report "$env:RUNNER_TEMP\desktop-report.json"
+
+      - name: Verify macOS archive, signatures, and tickets
+        if: matrix.platform == 'macos'
+        shell: bash
+        run: bash apps/desktop/scripts/verify-macos-artifacts.sh "$RUNNER_TEMP/desktop-report.json" "$DSH_DESKTOP_SIGNATURE_POLICY"
+
+      - name: Verify Windows archive and signatures
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: ./apps/desktop/scripts/verify-windows-artifacts.ps1 -Report "$env:RUNNER_TEMP\desktop-report.json" -SignaturePolicy $env:DSH_DESKTOP_SIGNATURE_POLICY
+
+      - name: Download signed Windows upgrade baseline
+        if: matrix.platform == 'windows' && env.DSH_DESKTOP_SIGNATURE_POLICY == 'signed'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASELINE_RUN_ID: ${{ inputs.windows_baseline_run_id }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:BASELINE_RUN_ID)) { throw 'desktop release: windows_baseline_run_id is required for signed candidates' }
+          $baseline = Join-Path $env:RUNNER_TEMP 'windows-baseline'
+          gh run download $env:BASELINE_RUN_ID --name desktop-windows-x64 --dir $baseline
+          $setups = @(Get-ChildItem -LiteralPath $baseline -Recurse -File -Filter 'DeepSeekHarnessIDESetup.exe')
+          if ($setups.Count -ne 1) { throw 'desktop release: baseline artifact must contain exactly one Setup.exe' }
+          Add-Content -LiteralPath $env:GITHUB_ENV -Value "DSH_DESKTOP_BASELINE_SETUP=$($setups[0].FullName)"
+
+      - name: Run macOS application lifecycle smoke
+        if: matrix.platform == 'macos'
+        shell: bash
+        run: bash apps/desktop/scripts/smoke-macos-lifecycle.sh "$RUNNER_TEMP/desktop-report.json"
+
+      - name: Run Windows install lifecycle smoke
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: ./apps/desktop/scripts/smoke-windows-lifecycle.ps1 -Report "$env:RUNNER_TEMP\desktop-report.json" -SignaturePolicy $env:DSH_DESKTOP_SIGNATURE_POLICY -BaselineSetup "$env:DSH_DESKTOP_BASELINE_SETUP"
+
+      - name: Upload verified candidate bytes
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.target }}
+          path: |
+            apps/desktop/out/make/**
+            ${{ runner.temp }}/desktop-report.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Remove ephemeral macOS signing keychain
+        if: always() && matrix.platform == 'macos' && env.DSH_DESKTOP_SIGNATURE_POLICY == 'signed'
+        shell: bash
+        run: |
+          if [[ -n ${DSH_DESKTOP_SIGNING_KEYCHAIN:-} ]]; then security delete-keychain "$DSH_DESKTOP_SIGNING_KEYCHAIN" || true; fi
+          rm -f -- "${APPLE_API_KEY:-}" "$RUNNER_TEMP/desktop-signing.p12"
+
+      - name: Remove ephemeral Windows signing certificate
+        if: always() && matrix.platform == 'windows' && env.DSH_DESKTOP_SIGNATURE_POLICY == 'signed'
+        shell: pwsh
+        run: |
+          if (-not [string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_FILE)) {
+            Remove-Item -LiteralPath $env:WINDOWS_CERTIFICATE_FILE -Force -ErrorAction SilentlyContinue
+          }
+
+  candidate:
+    name: Three-target desktop candidate
+    needs: native
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require every native target
+        env:
+          NATIVE_RESULT: ${{ needs.native.result }}
+        run: |
+          if [[ "$NATIVE_RESULT" != success ]]; then
+            echo "desktop release: native matrix result is $NATIVE_RESULT" >&2
+            exit 1
+          fi
+          echo 'All three native artifact and lifecycle checks passed. This workflow uploads evidence only and performs no publication.'

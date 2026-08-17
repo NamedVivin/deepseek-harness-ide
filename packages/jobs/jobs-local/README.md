@@ -6,15 +6,15 @@ Process-local implementation of the [`@deepseek-ai/dsh-jobs`](../jobs/README.md)
 
 ## Admission
 
-`maxConcurrentJobsPerOwner` is a positive safe integer and defaults to `10`. Before invoking a producer, `start()` counts the exact owner's `running` and `stopping` records; all unowned jobs share one separate service bucket. Terminal history does not occupy capacity, and only producer `done` settlement releases a stopping job's place.
+`maxConcurrentJobsPerOwner` is a positive safe integer and defaults to `10`. Before invoking a producer, `start()` counts the exact owner's `running` and `stopping` records plus asynchronous starters whose hooks are not ready; all unowned jobs share one separate service bucket. Terminal history does not occupy capacity, and only failed setup or producer `done` settlement releases a reservation.
 
-At capacity, `start()` fails before producer execution and id allocation with an error that names the limit and tells the model to use `job_kill`, wait for the job to finish stopping, and retry. The registry does not queue, preempt, or maintain a second mutable counter.
+At capacity, `start()` fails before producer execution and id allocation with an error that names the limit and tells the model to use `job_kill`, wait for the job to finish stopping, and retry. The registry does not queue or preempt; its unpublished-start set is the authoritative capacity reservation and teardown join.
 
 ## Lifecycle
 
-Jobs belong to their owner and backend, not the producer tool fiber, so producer and controller reloads do not stop them. The first job for an owner attaches one awaited effect to the exact `Agent` scope. Owner disposal cancels that object's jobs, awaits producer quiescence, and removes their snapshots; reused agent or session ids cannot redirect an old cleanup.
+Jobs belong to their owner and backend, not the producer tool fiber, so producer and controller reloads do not stop them. The first owned start attaches one awaited effect to the exact `Agent` scope. Owner disposal aborts that object's unpublished starters, cancels its registered jobs, awaits both to reach quiescence, and removes their snapshots; reused agent or session ids cannot redirect an old cleanup.
 
-Service disposal closes listeners, cancels all live jobs, awaits their records, and detaches effects from surviving owner scopes. If teardown cancellation throws, the service force-fails the record and warns that work may be orphaned instead of deadlocking. A cancellation that returns but never settles `done` remains indistinguishable from a slow stop and can stall teardown.
+Service disposal closes listeners, aborts and joins every unpublished starter, cancels all live jobs, awaits their records, and detaches effects from surviving owner scopes. A starter that returns hooks after its setup signal aborts is rolled back through `cancel` plus `done` before `start()` rejects. If teardown cancellation throws, the service force-fails a registered record and warns that work may still be running instead of deadlocking. A pending starter that ignores its signal, or a cancellation that returns but never settles `done`, remains indistinguishable from slow cleanup and can stall teardown.
 
 Settlement is first-wins: the earliest terminal outcome — producer settlement, a rejected `done` contained as `failed`, or a teardown force-failure — records once, releases waiters, and notifies listeners once with per-listener containment. Pending waits mark the job reported before listeners run so completion reporters do not duplicate notices, and a teardown cancel marks it for the same reason: nothing will read a notice addressed to an owner being destroyed. Completion is the last thing a settlement announces, after the record is committed and the visible-set change is published, because a reporter may open a model turn synchronously and every other observer must already have seen the settled record.
 
@@ -31,4 +31,4 @@ No direct invalidation; the named consumer owns any request-prefix changes.
 ## Known Limitations and Deferred Work
 
 - **Jobs are process-local** — records die with the harness process; durable or cross-restart execution needs a separate backend implementing the seam.
-- **A silently ineffective cancel can stall teardown and hold capacity** — if `cancel` returns without settling `done`, the registry cannot distinguish it from a slow stop; the job keeps one bucket slot for the rest of the service lifetime, and only an explicit throw can be force-failed safely.
+- **Non-cooperative setup or cancellation can stall teardown and hold capacity** — if `run(signal)` ignores an aborted setup signal, or `cancel` returns without settling `done`, the registry cannot distinguish it from slow cleanup. The reservation remains occupied; only an explicit registered-job cancellation throw can be force-failed safely.

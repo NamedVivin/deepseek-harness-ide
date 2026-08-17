@@ -69,6 +69,20 @@ class FakeFileSystem extends FileSystem {
       },
     ]
   }
+  override async listDirBounded(
+    target: FsTarget,
+    options: { maxEntries: number },
+  ): Promise<FsDirEntry[]> {
+    if (target.targetKey !== 'skills') throw new FsError(`not a directory: ${target.displayPath}`, 'FS_NOT_DIRECTORY')
+    if (options.maxEntries < 1) throw new FsError(`too large: ${target.displayPath}`, 'FS_TOO_LARGE')
+    return [{
+      name: 'alpha.md',
+      type: 'file',
+      target: { targetKey: FsTargetKey('skills/alpha.md'), displayPath: 'skills/alpha.md' },
+      size: 2,
+      version: FsVersion('v1'),
+    }]
+  }
   override async writeText(target: FsTarget, content: string, _expected?: FsWriteIntent): Promise<FsWriteOutcome> {
     const before = this.files.get(target.targetKey) ?? null
     this.files.set(target.targetKey, content)
@@ -141,6 +155,15 @@ describe('FileSystem provider seam', () => {
       size: 2,
       version: 'v1',
     }])
+  })
+
+  it('listDirBounded returns a complete directory or rejects an overflow', async () => {
+    const ctx = new Context()
+    await ctx.plugin(FakeFileSystem)
+    const fs = ctx.fs as FakeFileSystem
+    const target = await fs.resolve('skills')
+    await expect(fs.listDirBounded(target, { maxEntries: 1 })).resolves.toHaveLength(1)
+    await expect(fs.listDirBounded(target, { maxEntries: 0 })).rejects.toMatchObject({ code: 'FS_TOO_LARGE' })
   })
 
   it('stat returns undefined for an absent target', async () => {

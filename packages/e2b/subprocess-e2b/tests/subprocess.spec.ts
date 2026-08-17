@@ -12,8 +12,10 @@ import type E2BRuntime from '@deepseek-ai/dsh-e2b'
 import type { SubprocessSpawnSpec } from '@deepseek-ai/dsh-subprocess'
 import E2BSubprocessRuntime from '@deepseek-ai/dsh-subprocess-e2b'
 import * as E2BSubprocessInvariant from '../src/invariant.ts'
+import { readRemoteEnvironment } from '../src/environment.ts'
 import { E2BBase64Decoder, E2B_OUTPUT_COMPLETE_FRAME, E2BOutputReader } from '../src/output.ts'
 import { E2BSubprocessHandle } from '../src/process.ts'
+import { delay } from '../src/remote.ts'
 import InvariantRegistry from '@deepseek-ai/dsh-invariants'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -114,6 +116,9 @@ class FakeSandbox {
   environmentHome = '/home/user'
   environmentWire: string | undefined
   environmentRequest: ((signal: AbortSignal | undefined) => Promise<void>) | undefined
+  executableOutput = '/usr/bin/bash\n'
+  afterExecutableCheck: (() => void) | undefined
+  afterExecutableLookup: (() => void) | undefined
   processGroupId = '4242\n'
   exitStatus = ''
   statusReads = 0
@@ -250,6 +255,14 @@ class FakeSandbox {
             stderr: '',
           }
         }
+        if (command.startsWith('test -f ')) {
+          this.afterExecutableCheck?.()
+          return { exitCode: 0, stdout: '', stderr: '' }
+        }
+        if (command.includes('command -v --')) {
+          this.afterExecutableLookup?.()
+          return { exitCode: 0, stdout: this.executableOutput, stderr: '' }
+        }
         if (command.startsWith('set -o pipefail; ps -eo pgid=,stat=')) {
           this.beforeProbe?.()
           if (options?.signal?.aborted === true) throw new DOMException('aborted', 'AbortError')
@@ -385,6 +398,21 @@ describe('E2BOutputReader', () => {
 })
 
 describe('E2BSubprocessHandle', () => {
+  it('forwards cancellation while reading the remote environment', async () => {
+    const fake = new FakeSandbox()
+    const controller = new AbortController()
+    let observed: AbortSignal | undefined
+    fake.environmentRequest = async (signal) => { observed = signal }
+
+    await expect(readRemoteEnvironment(fake.sandbox)).resolves.toContain('HOME=/home/user\0')
+    await expect(readRemoteEnvironment(fake.sandbox, controller.signal)).resolves.toContain('HOME=/home/user\0')
+    expect(observed).toBe(controller.signal)
+  })
+
+  it('settles the shared delay helper', async () => {
+    await expect(delay(0)).resolves.toBeUndefined()
+  })
+
   it('starts asynchronously, keeps secrets out of the command, and supports deferred piped stdin/output', async () => {
     const fake = new FakeSandbox()
     fake.processGroupId = '4343\n'
@@ -402,7 +430,7 @@ describe('E2BSubprocessHandle', () => {
         KEEP: undefined,
       },
     }), '/workspace/.dsh-e2b/processes/one')
-    expect(handle.pid).toBe(-1)
+    expect(() => handle.pid).toThrow('before startup completed')
     handle.stdin!.write('hello')
     handle.stdin!.end()
     fake.releaseStart()
@@ -460,16 +488,13 @@ describe('E2BSubprocessHandle', () => {
     await expect(handle.waitForExit()).resolves.toBe(true)
   })
 
-  it('rejects an unrepresentable graceMs before any remote work', () => {
+  it('rejects an unrepresentable graceMs before any remote work', async () => {
     const ctx = new Context()
     const service = Object.create(E2BSubprocessRuntime.prototype) as E2BSubprocessRuntime
     Reflect.set(service, 'disposing', false)
     Reflect.set(service, 'ctx', ctx)
-    for (const graceMs of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
-      expect(() => service.spawn(spec({ graceMs }))).toThrow('graceMs must be a positive finite number')
-      void expect(service.spawnTerminal({
-        argv: ['bash'], cwd: '/w', rows: 24, cols: 80, graceMs,
-      })).rejects.toThrow('graceMs must be a positive finite number')
+    for (const graceMs of [0, -1, Number.NaN, Number.POSITIVE_INFINITY, 2_147_483_648]) {
+      await expect(service.spawn(spec({ graceMs }))).rejects.toThrow('graceMs must be a positive finite number')
     }
   })
 
@@ -1166,7 +1191,7 @@ describe('E2BSubprocessHandle', () => {
     fake.backgroundError = new Error('start failed')
     const handle = testHandle(runtime(fake), spec(), '/runtime/fail')
     await expect(handle.done).rejects.toThrow('start failed')
-    expect(handle.pid).toBe(-1)
+    expect(() => handle.pid).toThrow('before startup completed')
     expect(fake.removed).toContain('/runtime/fail/environment')
     expect(fake.removed).toContain('/runtime/fail')
     await expect(handle.waitForExit()).resolves.toBe(true)
@@ -1631,19 +1656,78 @@ describe('E2BSubprocessRuntime', () => {
     const fake = new FakeSandbox()
     fake.trapsTerm = true
     const { ctx, fiber } = await service(fake)
-    const handle = ctx.subprocess.spawn(spec({ graceMs: 1 }))
-    await flush()
+    const handle = await ctx.subprocess.spawn(spec({ graceMs: 1 }))
     await fiber.dispose()
     await expect(handle.done).resolves.toEqual({ exitCode: null, signal: 'SIGKILL' })
     expect(fake.alive).toBe(false)
+  })
+
+  it('rejects an invalid poll cadence during service construction', async () => {
+    for (const pollMs of [0, -1, 1.5, Number.POSITIVE_INFINITY]) {
+      const ctx = new Context()
+      ctx.provide('e2b', runtime(new FakeSandbox()))
+      await expect(ctx.plugin(E2BSubprocessRuntime, { pollMs }))
+        .rejects.toThrow('pollMs must be a positive safe integer')
+    }
+  })
+
+  it('resolves absolute and PATH executables and validates lookup results', async () => {
+    const fake = new FakeSandbox()
+    const { ctx, fiber } = await service(fake)
+
+    await expect(ctx.subprocess.resolveExecutable('')).rejects.toThrow('must be non-empty')
+    await expect(ctx.subprocess.resolveExecutable('./tool')).rejects.toThrow('is a relative path')
+    await expect(ctx.subprocess.resolveExecutable('/usr/bin/tool')).resolves.toBe('/usr/bin/tool')
+    await expect(ctx.subprocess.resolveExecutable('bash', { PATH: '/custom/bin' })).resolves.toBe('/usr/bin/bash')
+    expect(fake.commandsSeen).toContain("PATH='/custom/bin' command -v -- 'bash'")
+
+    fake.executableOutput = 'bin/tool\n'
+    await expect(ctx.subprocess.resolveExecutable('tool')).resolves.toBe('/workspace/bin/tool')
+    for (const output of ['tool\n', '/bin/one\n/bin/two\n']) {
+      fake.executableOutput = output
+      await expect(ctx.subprocess.resolveExecutable('tool')).rejects.toThrow('did not resolve to one absolute path')
+    }
+
+    await expect(ctx.subprocess.resolveExecutable('tool', {}, AbortSignal.abort('stop'))).rejects.toBe('stop')
+
+    const absoluteAbort = new AbortController()
+    fake.afterExecutableCheck = () => { absoluteAbort.abort('absolute stopped') }
+    await expect(ctx.subprocess.resolveExecutable('/usr/bin/tool', {}, absoluteAbort.signal))
+      .rejects.toBe('absolute stopped')
+    fake.afterExecutableCheck = undefined
+
+    const lookupAbort = new AbortController()
+    fake.afterExecutableLookup = () => { lookupAbort.abort('lookup stopped') }
+    await expect(ctx.subprocess.resolveExecutable('tool', {}, lookupAbort.signal)).rejects.toBe('lookup stopped')
+
+    await fiber.dispose()
+  })
+
+  it('withholds a handle when process publication races service disposal', async () => {
+    const fake = new FakeSandbox()
+    fake.deferProcessGroupRead()
+    const { ctx, fiber } = await service(fake)
+    const subprocess = ctx.subprocess
+    const spawning = subprocess.spawn(spec())
+    await vi.waitFor(() => { expect(fake.startOptions).toBeDefined() })
+    const live = (subprocess as unknown as { live: Set<E2BSubprocessHandle> }).live
+    const handle = [...live][0]
+    if (handle === undefined) throw new Error('expected one pending handle')
+    const rejectedDone = Promise.reject(new Error('late remote observation failed'))
+    void rejectedDone.catch(() => undefined)
+    Reflect.set(handle, 'done', rejectedDone)
+    Reflect.set(subprocess, 'disposing', true)
+    fake.releaseProcessGroupRead()
+
+    await expect(spawning).rejects.toThrow('service disposed during process setup')
+    await expect(fiber.dispose()).resolves.toBeUndefined()
   })
 
   it('awaits SDK settlement after the remote process group becomes quiescent', async () => {
     const fake = new FakeSandbox()
     fake.trapsTerm = true
     const { ctx, fiber } = await service(fake)
-    const handle = ctx.subprocess.spawn(spec())
-    await flush()
+    const handle = await ctx.subprocess.spawn(spec())
     fake.alive = false
 
     let disposed = false
@@ -1661,8 +1745,7 @@ describe('E2BSubprocessRuntime', () => {
     fake.signalErrors.push(new Error('TERM transport failed'), new Error('KILL transport failed'))
     fake.handle.killError = new Error('SDK kill failed')
     const { ctx, fiber } = await service(fake)
-    const handle = ctx.subprocess.spawn(spec({ graceMs: 1 }))
-    await flush()
+    const handle = await ctx.subprocess.spawn(spec({ graceMs: 1 }))
 
     await expect(fiber.dispose()).resolves.toBeUndefined()
     await expect(handle.waitForExit()).rejects.toThrow('remained live after force termination')
@@ -1733,8 +1816,7 @@ describe('E2BSubprocessRuntime', () => {
   it('releases naturally settled handles before later service disposal', async () => {
     const fake = new FakeSandbox()
     const { ctx, fiber } = await service(fake)
-    const handle = ctx.subprocess.spawn(spec())
-    await flush()
+    const handle = await ctx.subprocess.spawn(spec())
     fake.finish()
     await handle.done
     await flush()
@@ -1752,8 +1834,7 @@ describe('E2BSubprocessRuntime', () => {
       return fake.sandbox
     })
     const { ctx, fiber } = await service(fake, reconnecting)
-    const handle = ctx.subprocess.spawn(spec())
-    await flush()
+    const handle = await ctx.subprocess.spawn(spec())
     fake.finish()
     await handle.done
     await flush()
@@ -1767,20 +1848,41 @@ describe('E2BSubprocessRuntime', () => {
     fake.backgroundError = new Error('start failed during disposal')
     const { ctx, fiber } = await service(fake)
     const subprocess = ctx.subprocess
-    const handle = subprocess.spawn(spec())
+    const spawning = subprocess.spawn(spec())
+    const spawnFailure = expect(spawning).rejects.toThrow('start failed during disposal')
     await vi.waitFor(() => { expect(fake.startOptions).toBeDefined() })
     const disposing = fiber.dispose()
     await flush()
-    expect(() => subprocess.spawn(spec())).toThrow('service is disposing')
+    await expect(subprocess.spawn(spec())).rejects.toThrow('service is disposing')
     fake.releaseStart()
     await expect(disposing).resolves.toBeUndefined()
-    await expect(handle.done).rejects.toThrow('start failed during disposal')
+    await spawnFailure
   })
 
-  it('validates synchronous spawn preconditions', async () => {
+  it('withholds a handle until the remote process group is published', async () => {
+    const fake = new FakeSandbox()
+    fake.deferProcessGroupRead()
+    const { ctx, fiber } = await service(fake)
+    const spawning = ctx.subprocess.spawn(spec())
+    let published = false
+    void spawning.then(() => { published = true })
+
+    await vi.waitFor(() => { expect(fake.startOptions).toBeDefined() })
+    await flush()
+    expect(published).toBe(false)
+    fake.releaseProcessGroupRead()
+    const handle = await spawning
+    expect(handle.pid).toBe(4242)
+
+    fake.finish()
+    await handle.done
+    await fiber.dispose()
+  })
+
+  it('validates asynchronous spawn preconditions', async () => {
     const { ctx } = await service()
-    expect(() => ctx.subprocess.spawn(spec({ argv: [] }))).toThrow(/non-empty program/)
-    expect(() => ctx.subprocess.spawn(spec({ signal: AbortSignal.abort('stop') }))).toThrow(/aborted before spawn/)
+    await expect(ctx.subprocess.spawn(spec({ argv: [] }))).rejects.toThrow(/non-empty program/)
+    await expect(ctx.subprocess.spawn(spec({ signal: AbortSignal.abort('stop') }))).rejects.toThrow(/aborted before spawn/)
   })
 
   it('registers the package-owned empty invariant installer', async () => {

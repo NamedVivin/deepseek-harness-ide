@@ -251,7 +251,7 @@ function fakeRun(
     executable: '/native/claude',
     env: { ANTHROPIC_API_KEY: 'fake-key' },
     disposeGraceMs: 5,
-    spawn: (spawnSpec) => {
+    spawn: async (spawnSpec) => {
       spawnSpecs.push(spawnSpec)
       return child.handle
     },
@@ -331,7 +331,7 @@ describe('task admission and package contracts', () => {
     await ctx.plugin(LocalSubprocessRuntime)
     const child = fakeChild()
     const spawn = vi.spyOn(ctx.subprocess, 'spawn')
-      .mockImplementation(() => child.handle)
+      .mockResolvedValue(child.handle)
     const resolveExecutable = vi.spyOn(ctx.subprocess, 'resolveExecutable')
       .mockResolvedValue('/native/claude')
     const warn = vi.spyOn(ctx.logger, 'warn').mockImplementation(() => {})
@@ -502,7 +502,7 @@ describe('official spawn projection', () => {
     expect(process.kill('SIGTERM')).toBe(false)
   })
 
-  it('emits spawn errors', async () => {
+  it('emits post-creation process observation errors', async () => {
     const child = fakeChild()
     const process = new ManagedClaudeCodeProcess(child.handle)
     const errorListener = vi.fn()
@@ -510,10 +510,10 @@ describe('official spawn projection', () => {
     process.once('error', errorListener)
     process.on('error', removed)
     process.off('error', removed)
-    child.fail(new Error('spawn boom'))
+    child.fail(new Error('process observer boom'))
     await nextTask()
     expect(errorListener).toHaveBeenCalledWith(expect.objectContaining({
-      message: 'spawn boom',
+      message: 'process observer boom',
     }))
     expect(removed).not.toHaveBeenCalled()
   })
@@ -535,8 +535,9 @@ describe('query options and result mapping', () => {
     vi.stubEnv('HOST_SECRET_TOKEN', 'must-not-leak')
     vi.stubEnv('DSH_INTERNAL', 'must-not-leak')
     const child = fakeChild()
-    const spawn = vi.fn(() => child.handle)
-    const captured: SubprocessHandle[] = []
+    const spawn = vi.fn(async () => child.handle)
+    const managed = new ManagedClaudeCodeProcess(child.handle)
+    const spawnProcess = vi.fn(() => managed)
     const spec: ClaudeCodeRunSpec = {
       cwd: '/workspace',
       executable: '/native/claude',
@@ -548,9 +549,7 @@ describe('query options and result mapping', () => {
       spawn,
     }
     const controller = new AbortController()
-    const options = claudeQueryOptions(spec, controller, (value) => {
-      captured.push(value)
-    })
+    const options = claudeQueryOptions(spec, controller, spawnProcess)
 
     expect(options).toMatchObject({
       abortController: controller,
@@ -576,13 +575,12 @@ describe('query options and result mapping', () => {
     }
 
     const spawned = options.spawnClaudeCodeProcess!(sdkSpawnOptions())
-    expect(spawned).toBeInstanceOf(ManagedClaudeCodeProcess)
-    expect(captured).toEqual([child.handle])
-    expect(spawn).toHaveBeenCalledWith(expect.objectContaining({
-      argv: ['/sdk/claude', '--output-format', 'stream-json'],
+    expect(spawned).toBe(managed)
+    expect(spawnProcess).toHaveBeenCalledWith(expect.objectContaining({
+      command: '/sdk/claude',
       cwd: '/workspace',
-      graceMs: 17,
     }))
+    expect(spawn).not.toHaveBeenCalled()
   })
 
   it('accepts only a non-error success with a non-blank final result', () => {
@@ -627,7 +625,8 @@ describe('run publication, cancellation, and settlement', () => {
       ]),
       fixture.spec,
     )
-    expect(fixture.options).toHaveLength(1)
+    expect(fixture.options).toHaveLength(2)
+    expect(queryMock).toHaveBeenCalledTimes(2)
     expect(fixture.spawnSpecs).toHaveLength(1)
     await expect(run.result).resolves.toEqual({
       output: [{ type: 'text', text: 'exact answer' }],
@@ -639,6 +638,32 @@ describe('run publication, cancellation, and settlement', () => {
     await first
     expect(fixture.close).toHaveBeenCalledOnce()
     expect(fixture.child.terminate).toHaveBeenCalledOnce()
+  })
+
+  it('starts one real process and fails explicitly when the SDK launch request changes', async () => {
+    const child = fakeChild()
+    const spawn = vi.fn(async () => child.handle)
+    let sdkCalls = 0
+    queryMock.mockImplementation(({ options }) => {
+      sdkCalls += 1
+      options.spawnClaudeCodeProcess!(sdkSpawnOptions({
+        args: sdkCalls === 1 ? ['--stable'] : ['--changed'],
+        cwd: options.cwd!,
+        env: options.env!,
+      }))
+      return queryFrom([])
+    })
+
+    await expect(startClaudeCodeRun(request(), {
+      cwd: '/workspace',
+      executable: '/native/claude',
+      env: {},
+      disposeGraceMs: 5,
+      spawn,
+    })).rejects.toThrow('SDK spawn request changed between capture and launch (args)')
+    expect(sdkCalls).toBe(2)
+    expect(spawn).toHaveBeenCalledOnce()
+    expect(child.terminate).toHaveBeenCalledOnce()
   })
 
   it('flattens every SDK error result without inventing shared stop reasons', async () => {
@@ -706,7 +731,7 @@ describe('run publication, cancellation, and settlement', () => {
       executable: '/native/claude',
       env: {},
       disposeGraceMs: 5,
-      spawn: () => children[index++]!.handle,
+      spawn: async () => children[index++]!.handle,
     }
     queryMock.mockImplementation(({ prompt, options }) => {
       controllers.push(options.abortController!)
@@ -724,8 +749,10 @@ describe('run publication, cancellation, and settlement', () => {
       request([{ type: 'text', text: 'finish' }]),
       spec,
     )
-    expect(controllers).toHaveLength(2)
-    expect(controllers[0]).not.toBe(controllers[1])
+    expect(controllers).toHaveLength(4)
+    expect(controllers[0]).toBe(controllers[1])
+    expect(controllers[2]).toBe(controllers[3])
+    expect(controllers[0]).not.toBe(controllers[2])
     firstAbort.abort(new Error('parent cancelled'))
     await expect(first.result).resolves.toEqual({
       output: [],
@@ -735,7 +762,7 @@ describe('run publication, cancellation, and settlement', () => {
       output: [{ type: 'text', text: 'second answer' }],
       stopReason: 'completed',
     })
-    expect(controllers[1]!.signal.aborted).toBe(false)
+    expect(controllers[3]!.signal.aborted).toBe(false)
     await Promise.all([first.dispose(), second.dispose()])
   })
 
@@ -757,7 +784,7 @@ describe('run publication, cancellation, and settlement', () => {
         executable: '/native/claude',
         env: {},
         disposeGraceMs: 5,
-        spawn: () => child.handle,
+        spawn: async () => child.handle,
       },
     )
     await expect(run.result).resolves.toEqual({
@@ -783,7 +810,7 @@ describe('run publication, cancellation, and settlement', () => {
     )
     await expect(startClaudeCodeRun(request(), {
       ...unused.spec,
-    })).rejects.toThrow('did not publish a controllable')
+    })).rejects.toThrow('returned a Query after its spawn-request capture hook aborted creation')
     expect(noChildClose).toHaveBeenCalledOnce()
 
     const closeFailure = vi.fn(() => { throw new Error('close boom') })
@@ -800,6 +827,10 @@ describe('run publication, cancellation, and settlement', () => {
     const abortedClose = vi.fn()
     queryMock.mockImplementationOnce(({ options }) => {
       options.spawnClaudeCodeProcess!(sdkSpawnOptions())
+      return queryFrom([])
+    })
+    queryMock.mockImplementationOnce(({ options }) => {
+      options.spawnClaudeCodeProcess!(sdkSpawnOptions())
       startupAbort.abort(new Error('startup cancelled'))
       return queryFrom([], undefined, abortedClose)
     })
@@ -807,7 +838,7 @@ describe('run publication, cancellation, and settlement', () => {
       request(undefined, startupAbort.signal),
       {
         ...unused.spec,
-        spawn: () => abortedChild.handle,
+        spawn: async () => abortedChild.handle,
       },
     )
     await expect(abortedDuringStartup)
@@ -820,11 +851,15 @@ describe('run publication, cancellation, and settlement', () => {
     })
     await expect(startClaudeCodeRun(request(), {
       ...unused.spec,
-    })).rejects.toThrow('query failed before resource creation')
+    })).rejects.toThrow('SDK spawn-request capture failed')
 
     const spawned = fakeChild()
     const spawnSpecs: SubprocessSpawnSpec[] = []
     let factoryController: AbortController | undefined
+    queryMock.mockImplementationOnce(({ options }) => {
+      options.spawnClaudeCodeProcess!(sdkSpawnOptions())
+      return queryFrom([])
+    })
     queryMock.mockImplementationOnce(({ options }) => {
       factoryController = options.abortController
       options.spawnClaudeCodeProcess!(sdkSpawnOptions())
@@ -832,7 +867,7 @@ describe('run publication, cancellation, and settlement', () => {
     })
     const factoryFailure = startClaudeCodeRun(request(), {
       ...unused.spec,
-      spawn: (spawnSpec) => {
+      spawn: async (spawnSpec) => {
         spawnSpecs.push(spawnSpec)
         return spawned.handle
       },
@@ -842,14 +877,14 @@ describe('run publication, cancellation, and settlement', () => {
     expect(factoryController?.signal.aborted).toBe(true)
     expect(spawned.terminate).toHaveBeenCalledOnce()
 
-    const failedSpawn = fakeChild({
-      pid: -1,
-      doneError: new Error('spawn failed'),
+    const failed = fakeRun()
+    const spawnFailure = vi.fn(async (): Promise<SubprocessHandle> => {
+      throw new Error('spawn failed')
     })
-    const failed = fakeRun([], undefined, failedSpawn)
-    await expect(startClaudeCodeRun(request(), failed.spec))
-      .rejects.toBeInstanceOf(AggregateError)
-    expect(failed.close).toHaveBeenCalledOnce()
+    await expect(startClaudeCodeRun(request(), { ...failed.spec, spawn: spawnFailure }))
+      .rejects.toThrow('spawn failed')
+    expect(spawnFailure).toHaveBeenCalledOnce()
+    expect(failed.close).not.toHaveBeenCalled()
   })
 })
 
@@ -895,19 +930,13 @@ describe('query and process disposal', () => {
     )).rejects.toBeInstanceOf(AggregateError)
     expect(waitFailure.terminate).toHaveBeenCalledOnce()
 
-    const doneFailure = fakeChild({
-      pid: -1,
-      doneError: new Error('spawn boom'),
-    })
+    const doneFailure = fakeChild({ doneError: new Error('process observer boom') })
     await expect(disposeClaudeCodeChild(
       { close: vi.fn() },
       doneFailure.handle,
-    )).rejects.toThrow('spawn boom')
+    )).rejects.toThrow('process observer boom')
 
-    const both = fakeChild({
-      pid: -1,
-      doneError: new Error('spawn boom'),
-    })
+    const both = fakeChild({ doneError: new Error('process observer boom') })
     await expect(disposeClaudeCodeChild(
       { close: () => { throw new Error('close boom') } },
       both.handle,

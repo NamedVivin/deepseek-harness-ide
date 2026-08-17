@@ -51,7 +51,7 @@ export interface ClaudeCodeRunSpec {
   /** Subprocess termination grace passed to the shared process-tree owner. */
   readonly disposeGraceMs: number
   /** Shared subprocess service spawn operation. */
-  readonly spawn: (spec: SubprocessSpawnSpec) => SubprocessHandle
+  readonly spawn: (spec: SubprocessSpawnSpec) => Promise<SubprocessHandle>
   /** Diagnostic sink for a post-publication error flattened into a result. */
   readonly onError?: (error: Error, stopReason: SubagentStopReason) => void
 }
@@ -59,6 +59,11 @@ export interface ClaudeCodeRunSpec {
 function thrown(value: unknown): Error {
   /* v8 ignore next -- typed SDK and subprocess failures reject with Error. */
   return value instanceof Error ? value : new Error(String(value))
+}
+
+/** Read abort state after asynchronous or re-entrant SDK work. */
+function isAborted(signal: AbortSignal): boolean {
+  return signal.aborted
 }
 /* jscpd:ignore-end */
 
@@ -143,13 +148,11 @@ export async function disposeClaudeCodeChild(
     failures.push(thrown(error))
   }
 
-  if (child.pid > 0) {
-    child.terminate()
-    try {
-      await child.waitForExit()
-    } catch (error: unknown) {
-      failures.push(thrown(error))
-    }
+  child.terminate()
+  try {
+    await child.waitForExit()
+  } catch (error: unknown) {
+    failures.push(thrown(error))
   }
   try {
     await child.done
@@ -171,27 +174,121 @@ export async function disposeClaudeCodeChild(
  * Build the fixed official SDK options for one one-shot provider run.
  * @param spec - Workspace, environment, process service, and disposal policy.
  * @param controller - per-run cancellation owner.
- * @param capture - receives the real managed child synchronously from the SDK hook.
+ * @param spawnProcess - synchronous SDK hook backed by an already-ready managed child.
+ * @param environment - stable SDK environment reused across request capture and launch.
  * @returns options that inherit native settings while disabling persistence and user questions.
  */
 export function claudeQueryOptions(
   spec: ClaudeCodeRunSpec,
   controller: AbortController,
-  capture: (child: SubprocessHandle) => void,
+  spawnProcess: NonNullable<Options['spawnClaudeCodeProcess']>,
+  environment: Record<string, string | undefined> = { ...scrubbedParentEnv(), ...spec.env },
 ): Options {
   return {
     abortController: controller,
     cwd: spec.cwd,
     pathToClaudeCodeExecutable: spec.executable,
-    env: { ...scrubbedParentEnv(), ...spec.env },
+    env: { ...environment },
     persistSession: false,
     disallowedTools: ['AskUserQuestion'],
-    spawnClaudeCodeProcess: (options: SpawnOptions) => {
-      const child = spec.spawn(claudeSpawnSpec(options, spec.disposeGraceMs))
-      capture(child)
-      return new ManagedClaudeCodeProcess(child)
-    },
+    spawnClaudeCodeProcess: spawnProcess,
   }
+}
+
+/** Compare the SDK-composed environment without depending on property order. */
+function sameEnvironment(
+  left: SpawnOptions['env'],
+  right: SpawnOptions['env'],
+): boolean {
+  const leftKeys = Object.keys(left).sort()
+  const rightKeys = Object.keys(right).sort()
+  return leftKeys.length === rightKeys.length
+    && leftKeys.every((key, index) => (
+      key === rightKeys[index]
+      && left[key] === right[key]
+    ))
+}
+
+/**
+ * Require the real SDK query to request the exact process captured before the
+ * asynchronous provider spawn. Forwarded signal identity is intentionally
+ * excluded: each SDK transport owns a fresh post-grace signal, which is wired
+ * to the already-created managed process separately.
+ */
+function assertSameSpawnOptions(expected: SpawnOptions, actual: SpawnOptions): void {
+  const differences: string[] = []
+  if (expected.command !== actual.command) differences.push('command')
+  if (expected.cwd !== actual.cwd) differences.push('cwd')
+  if (
+    expected.args.length !== actual.args.length
+    || expected.args.some((value: string, index: number) => value !== actual.args[index])
+  ) differences.push('args')
+  if (!sameEnvironment(expected.env, actual.env)) differences.push('env')
+  if (differences.length > 0) {
+    throw new Error(
+      `subagent-claude-code: SDK spawn request changed between capture and launch (${differences.join(', ')})`,
+    )
+  }
+}
+
+/**
+ * Ask the SDK to compose its private CLI request, then stop synchronously at
+ * its custom-spawn hook before it creates a process or publishes a Query.
+ */
+function captureClaudeSpawnOptions(
+  prompt: string,
+  spec: ClaudeCodeRunSpec,
+  controller: AbortController,
+  environment: Record<string, string | undefined>,
+): SpawnOptions {
+  const capturedStop = new Error('subagent-claude-code: SDK spawn request captured')
+  let captured: SpawnOptions | undefined
+  let unexpectedQuery: Query | undefined
+  try {
+    unexpectedQuery = officialQuery({
+      prompt,
+      options: claudeQueryOptions(spec, controller, (options: SpawnOptions) => {
+        captured = options
+        throw capturedStop
+      }, environment),
+    })
+  } catch (error: unknown) {
+    if (error !== capturedStop) {
+      throw new Error('subagent-claude-code: SDK spawn-request capture failed', {
+        cause: thrown(error),
+      })
+    }
+  }
+  if (unexpectedQuery !== undefined) {
+    const failure = new Error(
+      'subagent-claude-code: SDK returned a Query after its spawn-request capture hook aborted creation',
+    )
+    try {
+      unexpectedQuery.close()
+    } catch (error: unknown) {
+      throw new AggregateError(
+        [failure, thrown(error)],
+        'subagent-claude-code: invalid capture Query cleanup failed',
+      )
+    }
+    throw failure
+  }
+  if (captured === undefined) {
+    throw new Error('subagent-claude-code: SDK did not invoke its spawn-request capture hook')
+  }
+  return captured
+}
+
+/** Forward the real SDK transport's post-grace abort to its managed child. */
+function forwardSdkAbort(child: SubprocessHandle, signal: AbortSignal): void {
+  const terminate = (): void => { child.terminate() }
+  if (signal.aborted) {
+    terminate()
+    return
+  }
+  signal.addEventListener('abort', terminate, { once: true })
+  const remove = (): void => { signal.removeEventListener('abort', terminate) }
+  void child.done.then(remove, remove)
 }
 
 /**
@@ -210,9 +307,15 @@ export async function startClaudeCodeRun(
   }
 
   const controller = new AbortController()
+  const setupController = new AbortController()
+  let setupComplete = false
   const requestCancel = (): void => {
+    const reason = new Error('subagent-claude-code: run cancelled locally')
+    if (!setupComplete && !setupController.signal.aborted) {
+      setupController.abort(reason)
+    }
     if (!controller.signal.aborted) {
-      controller.abort(new Error('subagent-claude-code: run cancelled locally'))
+      controller.abort(reason)
     }
   }
   const onAbort = (): void => { requestCancel() }
@@ -221,20 +324,46 @@ export async function startClaudeCodeRun(
   let child: SubprocessHandle | undefined
   let query: Query | undefined
   try {
-    query = officialQuery({
-      prompt,
-      options: claudeQueryOptions(spec, controller, (captured) => {
-        child = captured
-      }),
-    })
-    if (child === undefined || child.pid <= 0) {
-      throw new Error(
-        'subagent-claude-code: official SDK did not publish a controllable Claude Code process',
-      )
+    const environment = { ...scrubbedParentEnv(), ...spec.env }
+    const captured = captureClaudeSpawnOptions(prompt, spec, controller, environment)
+    if (isAborted(controller.signal)) {
+      throw new Error('subagent-claude-code: SDK aborted while capturing its spawn request')
     }
-    if (controller.signal.aborted) {
+    child = await spec.spawn(claudeSpawnSpec(
+      captured,
+      spec.disposeGraceMs,
+      process.platform,
+      setupController.signal,
+    ))
+    if (isAborted(controller.signal)) {
       throw new Error('subagent-claude-code: request was aborted before SDK startup')
     }
+    if (child.stdin === undefined || child.stdout === undefined) {
+      throw new Error('subagent-claude-code: subprocess implementation dropped a piped SDK stream')
+    }
+    const readyChild = child
+    let spawnHookCalls = 0
+    query = officialQuery({
+      prompt,
+      options: claudeQueryOptions(spec, controller, (actual: SpawnOptions) => {
+        spawnHookCalls += 1
+        if (spawnHookCalls !== 1) {
+          throw new Error('subagent-claude-code: SDK invoked its real spawn hook more than once')
+        }
+        assertSameSpawnOptions(captured, actual)
+        forwardSdkAbort(readyChild, actual.signal)
+        return new ManagedClaudeCodeProcess(readyChild)
+      }, environment),
+    })
+    if (spawnHookCalls !== 1) {
+      throw new Error(
+        'subagent-claude-code: official SDK did not claim the ready Claude Code process',
+      )
+    }
+    if (isAborted(controller.signal)) {
+      throw new Error('subagent-claude-code: request was aborted before SDK startup')
+    }
+    setupComplete = true
   } catch (error: unknown) {
     request.signal.removeEventListener('abort', onAbort)
     const cancelledBeforeCleanup = controller.signal.aborted

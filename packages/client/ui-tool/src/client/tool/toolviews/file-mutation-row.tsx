@@ -23,9 +23,8 @@ type FileMutationRowProps = ToolCallViewProps & PropsLocale<'conversation'>
 /**
  * File-mutation row: icon + {Edit,Write} · {path} in the shared ToolRow chrome,
  * with the applied diff as the row's collapsed-by-default card body. The
- * summary is a path link (a file tool's interaction); the host's `openFile`
- * resolves it against the session cwd, so this passes the tool's own path
- * verbatim. An errored mutation has no diff card, so ToolRow surfaces the
+ * summary is a path link (a file tool's interaction); `openFile` receives the
+ * presenter-owned location verbatim. An errored mutation has no diff card, so ToolRow surfaces the
  * model-facing error text through its Output section and its first line in the
  * collapsed summary instead.
  */
@@ -46,6 +45,7 @@ export function FileMutationRow({ toolName, block, cwd, openFile, inspect, t }: 
       diff={diff}
       state={model.state}
       filePath={model.filePath}
+      fileLocation={model.fileLocation}
       onOpenFile={openFile}
       inspect={inspect}
     />

@@ -191,19 +191,19 @@ describe('dsh-acp-demo composition', () => {
       workspaceContext: false,
     })
     let settle!: (outcome: { status: 'killed' }) => void
-    ctx.jobs.start({
+    await ctx.jobs.start({
       kind: 'bash',
       label: 'hold configured slot',
-      run: () => ({
+      run: async () => ({
         cancel: () => { settle({ status: 'killed' }) },
         done: new Promise((resolve) => { settle = resolve }),
       }),
     })
-    expect(() => ctx.jobs.start({
+    await expect(ctx.jobs.start({
       kind: 'bash',
       label: 'blocked configured task',
-      run: () => ({ cancel: () => {}, done: Promise.resolve({ status: 'completed' }) }),
-    })).toThrow('(limit: 1)')
+      run: async () => ({ cancel: () => {}, done: Promise.resolve({ status: 'completed' }) }),
+    })).rejects.toThrow('(limit: 1)')
     await ctx.fiber.dispose()
   })
 

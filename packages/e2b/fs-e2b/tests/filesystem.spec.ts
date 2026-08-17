@@ -32,6 +32,16 @@ function commandError(exitCode: number, stderr = ''): CommandExitError {
   return new CommandExitError({ exitCode, stdout: '', stderr, error: stderr })
 }
 
+function unquoteE2BShellArg(quoted: string): string {
+  expect(quoted.startsWith("'") && quoted.endsWith("'")).toBe(true)
+  return quoted.slice(1, -1).replaceAll(String.raw`'"'"'`, '\'')
+}
+
+function boundedListingOutput(records: readonly (readonly [string, string, string, string])[]): string {
+  if (records.length === 0) return ''
+  return Buffer.from(`${records.flat().join('\0')}\0`).toString('base64')
+}
+
 class FakeRemote {
   readonly nodes = new Map<string, RemoteNode>()
   readonly writes: Array<{ path: string; data: string; metadata?: Record<string, string> }> = []
@@ -40,6 +50,7 @@ class FakeRemote {
   readonly links: Array<{ from: string; to: string }> = []
   readonly removals: string[] = []
   readonly commands: string[] = []
+  readonly boundedListEntryLimits: number[] = []
   readonly reads: Array<{ path: string; format: 'bytes' | 'stream' }> = []
   streamChunks: Uint8Array[] | undefined
   streamKeepOpen = false
@@ -52,6 +63,7 @@ class FakeRemote {
   nextRenameError: unknown
   nextRemoveError: unknown
   canonicalOutput: string | undefined
+  boundedListOutput: string | undefined
   abortAfterRename: AbortController | undefined
   competitorBeforeLink:
     | { path: string; kind: 'file'; data: string }
@@ -250,7 +262,7 @@ class FakeRemote {
         const realpathSuffix = ' | base64 -w0'
         if (command.startsWith(realpathPrefix) && command.endsWith(realpathSuffix)) {
           const quoted = command.slice(realpathPrefix.length, -realpathSuffix.length)
-          const input = quoted.slice(1, -1).replaceAll(String.raw`'"'"'`, '\'')
+          const input = unquoteE2BShellArg(quoted)
           const node = this.nodes.get(input)
           const canonical = `${node?.symlinkTarget ?? input}\0`
           return {
@@ -258,6 +270,47 @@ class FakeRemote {
             stdout: this.canonicalOutput ?? Buffer.from(canonical).toString('base64'),
             stderr: '',
           }
+        }
+        const boundedPrefix = 'set -o pipefail; find -P -- '
+        const boundedDescriptor = " -mindepth 1 -maxdepth 1 -printf '%f\\0%y\\0%Y\\0%s\\0' | head -z -n "
+        const boundedSuffix = ' | base64 -w0; statuses=("${PIPESTATUS[@]}"); if (( statuses[0] != 0 && statuses[0] != 141 )); then exit "${statuses[0]}"; fi; if (( statuses[1] != 0 || statuses[2] != 0 )); then exit 1; fi'
+        if (command.startsWith(boundedPrefix) && command.endsWith(boundedSuffix)) {
+          const body = command.slice(boundedPrefix.length, -boundedSuffix.length)
+          const descriptorAt = body.lastIndexOf(boundedDescriptor)
+          expect(descriptorAt).toBeGreaterThan(0)
+          const path = unquoteE2BShellArg(body.slice(0, descriptorAt))
+          const fieldLimit = Number(body.slice(descriptorAt + boundedDescriptor.length))
+          expect(Number.isSafeInteger(fieldLimit) && fieldLimit % 4 === 0).toBe(true)
+          const entryLimit = fieldLimit / 4
+          this.boundedListEntryLimits.push(entryLimit)
+          this.required(path)
+          if (this.boundedListOutput !== undefined) {
+            const stdout = this.boundedListOutput
+            this.boundedListOutput = undefined
+            return { exitCode: 0, stdout, stderr: '' }
+          }
+          const records = [...this.nodes.entries()]
+            .filter(([candidate]) => candidate !== path && dirname(candidate) === path)
+            .slice(0, entryLimit)
+            .map(([candidate, node]) => {
+              const pathType = node.symlinkTarget !== undefined
+                ? 'l'
+                : node.type === FileType.FILE
+                  ? 'f'
+                  : node.type === FileType.DIR
+                    ? 'd'
+                    : 's'
+              const followed = node.symlinkTarget === undefined ? node : this.nodes.get(node.symlinkTarget)
+              const targetType = followed?.type === FileType.FILE
+                ? 'f'
+                : followed?.type === FileType.DIR
+                  ? 'd'
+                  : followed === undefined
+                    ? 'N'
+                    : 's'
+              return [posix.basename(candidate), pathType, targetType, String(node.data.byteLength)] as const
+            })
+          return { exitCode: 0, stdout: boundedListingOutput(records), stderr: '' }
         }
         const chmod = /^chmod ([0-7]+) -- '([^']+)'$/.exec(command)
         if (chmod !== null) this.required(chmod[2]!).mode = Number.parseInt(chmod[1]!, 8)
@@ -347,6 +400,74 @@ describe('E2BFileSystem identity, metadata, and reads', () => {
       target: { targetKey: '/workspace/a.txt', displayPath: '/workspace/link.txt' },
     })
     expect(listed.some(entry => entry.name === 'nested.txt')).toBe(false)
+  })
+
+  it('bounds enumeration remotely without calling the unbounded SDK listing', async () => {
+    const remote = new FakeRemote()
+    remote.file('/workspace/z.txt', 'z')
+    remote.dir('/workspace/dir')
+    remote.other('/workspace/special')
+    remote.file('/workspace/a.txt', 'aa')
+    remote.symlink('/workspace/link.txt', '/workspace/a.txt')
+    const { fs } = await setup(remote)
+    const directory = await fs.resolve('/workspace')
+    const list = vi.spyOn(remote.sandbox.files, 'list')
+
+    const entries = await fs.listDirBounded(directory, { maxEntries: 5 })
+
+    expect(entries.map(entry => entry.name)).toEqual(['a.txt', 'dir', 'link.txt', 'special', 'z.txt'])
+    expect(entries.find(entry => entry.name === 'a.txt')).toMatchObject({ type: 'file', size: 2 })
+    expect(entries.find(entry => entry.name === 'dir')).toMatchObject({ type: 'directory' })
+    expect(entries.find(entry => entry.name === 'link.txt')).toEqual({
+      name: 'link.txt',
+      type: 'file',
+      target: { targetKey: '/workspace/a.txt', displayPath: '/workspace/link.txt' },
+    })
+    expect(entries.find(entry => entry.name === 'special')).toMatchObject({ type: 'other' })
+    expect(remote.boundedListEntryLimits).toEqual([6])
+    expect(list).not.toHaveBeenCalled()
+
+    await expectCode(fs.listDirBounded(directory, { maxEntries: 2 }), 'FS_TOO_LARGE')
+    expect(remote.boundedListEntryLimits).toEqual([6, 3])
+    expect(list).not.toHaveBeenCalled()
+  })
+
+  it('accepts an empty directory at a zero-entry bound', async () => {
+    const remote = new FakeRemote()
+    remote.dir('/empty')
+    const { fs } = await setup(remote)
+    await expect(fs.listDirBounded(await fs.resolve('/empty'), { maxEntries: 0 })).resolves.toEqual([])
+  })
+
+  it.each([
+    ['invalid base64', '!!!!'],
+    ['non-canonical base64', 'Af=='],
+    ['missing terminator', Buffer.from(['a', 'f', 'f', '1'].join('\0')).toString('base64')],
+    ['invalid UTF-8', Buffer.from([0xff, 0]).toString('base64')],
+    ['incomplete record', Buffer.from('a\0f\0f\0').toString('base64')],
+    ['empty name', boundedListingOutput([['', 'f', 'f', '1']])],
+    ['dot name', boundedListingOutput([['.', 'f', 'f', '1']])],
+    ['dot-dot name', boundedListingOutput([['..', 'f', 'f', '1']])],
+    ['nested name', boundedListingOutput([['a/b', 'f', 'f', '1']])],
+    ['invalid path type', boundedListingOutput([['a', 'ff', 'f', '1']])],
+    ['invalid target type', boundedListingOutput([['a', 'f', 'ff', '1']])],
+    ['non-numeric size', boundedListingOutput([['a', 'f', 'f', 'x']])],
+    ['unsafe size', boundedListingOutput([['a', 'f', 'f', '9007199254740992']])],
+  ])('rejects %s from bounded directory transport', async (_label, output) => {
+    const remote = new FakeRemote()
+    remote.boundedListOutput = output
+    const { fs } = await setup(remote)
+    await expectCode(fs.listDirBounded(await fs.resolve('/workspace'), { maxEntries: 1 }), 'FS_IO_ERROR')
+  })
+
+  it('rejects a bounded transport response that exceeds the requested max-plus-one', async () => {
+    const remote = new FakeRemote()
+    remote.boundedListOutput = boundedListingOutput([
+      ['a', 'f', 'f', '1'],
+      ['b', 'f', 'f', '1'],
+    ])
+    const { fs } = await setup(remote)
+    await expectCode(fs.listDirBounded(await fs.resolve('/workspace'), { maxEntries: 0 }), 'FS_IO_ERROR')
   })
 
   it('projects canonical process paths, file URLs, and containment', async () => {
@@ -528,8 +649,17 @@ describe('E2BFileSystem identity, metadata, and reads', () => {
     await expectCode(fs.lstat(''), 'FS_NOT_FOUND')
     await expectCode(fs.listDir(await fs.resolve('missing')), 'FS_NOT_FOUND')
     await expectCode(fs.listDir(await fs.resolve('/workspace/file')), 'FS_NOT_DIRECTORY')
+    await expectCode(fs.listDirBounded(await fs.resolve('missing'), { maxEntries: 1 }), 'FS_NOT_FOUND')
+    await expectCode(fs.listDirBounded(await fs.resolve('/workspace/file'), { maxEntries: 1 }), 'FS_NOT_DIRECTORY')
     remote.nextListError = new Error('listing transport failed')
     await expectCode(fs.listDir(await fs.resolve('/workspace')), 'FS_IO_ERROR')
+    const directory = await fs.resolve('/workspace')
+    remote.nextCommandError = commandError(1, 'permission denied')
+    await expectCode(fs.listDirBounded(directory, { maxEntries: 1 }), 'FS_PERMISSION_DENIED')
+    remote.nextCommandError = commandError(1)
+    await expectCode(fs.listDirBounded(directory, { maxEntries: 1 }), 'FS_IO_ERROR')
+    remote.nextCommandError = new Error('bounded listing transport failed')
+    await expectCode(fs.listDirBounded(directory, { maxEntries: 1 }), 'FS_IO_ERROR')
   })
 })
 

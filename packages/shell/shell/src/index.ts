@@ -52,9 +52,10 @@ declare module '@deepseek-ai/cordis' {
  * Implementations must honor these semantics:
  * - {@link run} rejects only for infrastructure failures. Nonzero exits,
  *   timeout kills, and abort kills resolve with a {@link ShellRunResult}.
- * - {@link start} returns immediately; no timeout applies to background
- *   processes. `done` settles at process close and never rejects; spawn
- *   failures settle as `killed` with the error on stderr.
+ * - {@link start} resolves after the background process is created; no timeout
+ *   applies after creation. `done` settles at process close and never rejects;
+ *   creation failures reject `start`, while later process-monitoring failures
+ *   settle the handle as `killed` with the error on stderr.
  * - {@link ShellProcess.readOutput} is incremental: consecutive reads never
  *   repeat output. Lossy reads report truncation and available spill files.
  * - A still-running background process is stopped and awaited when its
@@ -93,11 +94,11 @@ export abstract class ShellExecutor extends Service {
   abstract run(spec: ShellExecSpec): Promise<ShellRunResult>
 
   /**
-   * Start a background process and return its handle immediately.
+   * Start a background process and resolve after its subprocess handle is ready.
    * @param spec - a resolved spec from {@link resolve}, never a raw request.
-   * @returns the live process handle (reads, kill, quiescence promise).
+   * @returns the live process handle after process creation succeeds.
    */
-  abstract start(spec: ShellExecSpec): ShellProcess
+  abstract start(spec: ShellExecSpec): Promise<ShellProcess>
 }
 
 export default ShellExecutor

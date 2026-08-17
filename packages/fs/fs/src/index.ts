@@ -208,6 +208,23 @@ export abstract class FileSystem extends Service {
   abstract listDir(target: FsTarget, signal?: AbortSignal): Promise<FsDirEntry[]>
 
   /**
+   * List a complete directory only when it contains at most `maxEntries`
+   * direct children. Providers stop after observing `maxEntries + 1` children
+   * and fail with `FS_TOO_LARGE`; they must not delegate to {@link listDir} or
+   * materialize the complete oversized directory. A successful result has the
+   * same metadata and stable name order as {@link listDir}.
+   * @param target - the resolved directory target.
+   * @param options - the inclusive complete-result entry limit.
+   * @param signal - aborts the listing.
+   * @returns every direct child in stable name order when the directory fits.
+   */
+  abstract listDirBounded(
+    target: FsTarget,
+    options: { maxEntries: number },
+    signal?: AbortSignal,
+  ): Promise<FsDirEntry[]>
+
+  /**
    * Atomically create or replace UTF-8 text. `expected` guards intent and
    * staleness; omission allows unconditional overwrite.
    * @param target - the resolved target to write.

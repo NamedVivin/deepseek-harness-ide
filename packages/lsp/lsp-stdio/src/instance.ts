@@ -55,18 +55,34 @@ export class LspInstance {
   /** Populated once `initialize` succeeds; a failed handshake rejects every query. */
   private readonly ready: Promise<void>
 
-  /**
-   * @param spec - the launch, initialize, and teardown parameters.
-   * @param spawner - the subprocess seam's spawn function.
-   * @param writer - optional connection writer used by transport conformance tests.
-   */
-  constructor(private readonly spec: InstanceSpec, spawner: ConnectionSpawner, writer?: ConnectionWriter) {
-    this.connection = new LspConnection(spec, spawner, (method, params) => this.answerServerRequest(method, params), writer)
+  private constructor(private readonly spec: InstanceSpec, connection: LspConnection) {
+    this.connection = connection
     this.ready = this.initialize()
     // A handshake rejection must not surface as an unhandled rejection before the first query awaits
     // it; queries attach the real handler.
     this.ready.catch(() => {})
     void this.connection.closed.then(() => { this.processClosed = true })
+  }
+
+  /**
+   * Create one server process and publish the instance only after its process handle is ready.
+   * @param spec - the launch, initialize, and teardown parameters.
+   * @param spawner - the subprocess service's asynchronous spawn operation.
+   * @param writer - optional connection writer used by transport conformance tests.
+   * @returns the live instance while its LSP initialization proceeds.
+   */
+  static async create(
+    spec: InstanceSpec,
+    spawner: ConnectionSpawner,
+    writer?: ConnectionWriter,
+  ): Promise<LspInstance> {
+    const connection = await LspConnection.create(
+      spec,
+      spawner,
+      (method, params) => answerServerRequest(spec.configuration, method, params),
+      writer,
+    )
+    return new LspInstance(spec, connection)
   }
 
   /** Synchronous liveness check: true once the process has closed or the instance was disposed. */
@@ -249,25 +265,6 @@ export class LspInstance {
     return { kind: 'locations', locations: normalizeLocations(payload), resolvedWorkspaceUri: this.spec.workspaceUri }
   }
 
-  private answerServerRequest(method: string, params: unknown): Promise<unknown> {
-    if (method === 'workspace/configuration') {
-      // Answer every requested item with the one static configuration value.
-      const record = params as { items?: unknown[] } | null
-      /* v8 ignore next -- a configuration request always carries an items array; the empty fallback is defensive. */
-      const items = Array.isArray(record?.items) ? record.items : []
-      return Promise.resolve(items.map(() => this.spec.configuration))
-    }
-    if (LIFECYCLE_NOOP_METHODS.has(method)) {
-      // Accept lifecycle bookkeeping requests with an empty result; we register nothing dynamic.
-      return Promise.resolve(null)
-    }
-    if (method === 'workspace/applyEdit') {
-      // This host never applies edits or runs commands.
-      return Promise.reject(new Error('workspace/applyEdit is not permitted by this host'))
-    }
-    return Promise.reject(new Error(`unsupported server request: ${method}`))
-  }
-
   /**
    * Reject queued work, attempt graceful `shutdown`/`exit`, then escalate SIGTERM→SIGKILL, awaiting
    * process close so nothing outlives disposal.
@@ -315,6 +312,26 @@ export class LspInstance {
       this.connection.waitForProcessTreeExit(),
     ])
   }
+}
+
+/** Answer the bounded server→client request set from immutable instance configuration. */
+function answerServerRequest(configuration: unknown, method: string, params: unknown): Promise<unknown> {
+  if (method === 'workspace/configuration') {
+    // Answer every requested item with the one static configuration value.
+    const record = params as { items?: unknown[] } | null
+    /* v8 ignore next -- a configuration request always carries an items array; the empty fallback is defensive. */
+    const items = Array.isArray(record?.items) ? record.items : []
+    return Promise.resolve(items.map(() => configuration))
+  }
+  if (LIFECYCLE_NOOP_METHODS.has(method)) {
+    // Accept lifecycle bookkeeping requests with an empty result; we register nothing dynamic.
+    return Promise.resolve(null)
+  }
+  if (method === 'workspace/applyEdit') {
+    // This host never applies edits or runs commands.
+    return Promise.reject(new Error('workspace/applyEdit is not permitted by this host'))
+  }
+  return Promise.reject(new Error(`unsupported server request: ${method}`))
 }
 
 /** Server→client request methods this host acknowledges with an empty result (no dynamic registration). */

@@ -13,13 +13,10 @@ import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
 import type {
   SubprocessHandle,
   SubprocessSpawnSpec,
-  SubprocessTerminalHandle,
-  SubprocessTerminalSpawnSpec,
 } from '@deepseek-ai/dsh-subprocess'
 import { e2bControlEnvs, quoteE2BShellArg } from '@deepseek-ai/dsh-e2b'
 import { E2BSubprocessHandle } from './process.ts'
 import { asError, signalOpts } from './remote.ts'
-import { spawnE2BTerminal } from './terminal.ts'
 
 /** Configuration for the E2B subprocess adapter. */
 export interface Config {
@@ -29,11 +26,6 @@ export interface Config {
 
 interface SchemaResolvedConfig extends Config {
   pollMs: number
-}
-
-interface TerminalSetup {
-  done: Promise<void>
-  controller: AbortController
 }
 
 /**
@@ -57,8 +49,6 @@ export class E2BSubprocessRuntime extends SubprocessRuntime {
   })
 
   private readonly live = new Set<E2BSubprocessHandle>()
-  private readonly terminals = new Set<SubprocessTerminalHandle>()
-  private readonly terminalSetups = new Set<TerminalSetup>()
   private readonly pollMs: number
   private disposing = false
 
@@ -73,12 +63,7 @@ export class E2BSubprocessRuntime extends SubprocessRuntime {
     this.pollMs = pollMs
     ctx.effect(() => async () => {
       this.disposing = true
-      for (const setup of this.terminalSetups) {
-        setup.controller.abort(new Error('subprocess-e2b: service disposed during terminal setup'))
-      }
-      await Promise.all([...this.terminalSetups].map(setup => setup.done))
       const handles = [...this.live]
-      const terminals = [...this.terminals]
       const pending: Promise<unknown>[] = []
       for (const handle of handles) {
         handle.terminate()
@@ -86,9 +71,6 @@ export class E2BSubprocessRuntime extends SubprocessRuntime {
           await handle.done.catch(() => undefined)
           this.live.delete(handle)
         }))
-      }
-      for (const terminal of terminals) {
-        pending.push(terminal.terminate().then(() => { this.terminals.delete(terminal) }))
       }
       const outcomes = await Promise.allSettled(pending)
       const failures = outcomes.flatMap<unknown>(outcome => outcome.status === 'rejected'
@@ -137,7 +119,7 @@ export class E2BSubprocessRuntime extends SubprocessRuntime {
   }
 
   /** @inheritdoc */
-  spawn(spec: SubprocessSpawnSpec): SubprocessHandle {
+  async spawn(spec: SubprocessSpawnSpec): Promise<SubprocessHandle> {
     if (this.disposing) throw new Error('subprocess-e2b: service is disposing')
     const program = spec.argv[0]
     if (program === undefined || program.length === 0) {
@@ -157,52 +139,26 @@ export class E2BSubprocessRuntime extends SubprocessRuntime {
     void handle.done.then(release, release).catch((_automaticReleaseFailure: unknown) => {
       // Retain the handle so service disposal can retry its cleanup transaction.
     })
+    await handle.waitUntilReady()
+    // Remote setup yields to service disposal. A handle cannot publish after
+    // the service has begun tearing down its ownership set.
+    // oxlint-disable-next-line typescript/no-unnecessary-condition
+    if (this.disposing) {
+      handle.terminate()
+      await handle.waitForExit()
+      await handle.done.catch(() => undefined)
+      throw new Error('subprocess-e2b: service disposed during process setup')
+    }
     return handle
   }
 
-  /** @inheritdoc */
-  async spawnTerminal(spec: SubprocessTerminalSpawnSpec): Promise<SubprocessTerminalHandle> {
-    if (this.disposing) throw new Error('subprocess-e2b: service is disposing')
-    const program = spec.argv[0]
-    if (program === undefined || program.length === 0) {
-      throw new Error('subprocess-e2b: terminal argv must contain a program')
-    }
-    requireRepresentableGrace(spec.graceMs)
-    spec.signal?.throwIfAborted()
-    const stateDir = posix.join(this.ctx.e2b.runtimeRoot, 'terminals', randomUUID())
-    const done = Promise.withResolvers<void>()
-    const setup: TerminalSetup = { done: done.promise, controller: new AbortController() }
-    const setupSignal = spec.signal === undefined
-      ? setup.controller.signal
-      : AbortSignal.any([spec.signal, setup.controller.signal])
-    this.terminalSetups.add(setup)
-    try {
-      const terminal = await spawnE2BTerminal(
-        this.ctx.e2b,
-        { ...spec, signal: setupSignal },
-        stateDir,
-        this.pollMs,
-      )
-      this.terminals.add(terminal)
-      // oxlint-disable-next-line typescript/no-unnecessary-condition -- Remote allocation yields to disposal.
-      if (this.disposing) {
-        await terminal.terminate()
-        this.terminals.delete(terminal)
-        throw new Error('subprocess-e2b: service disposed during terminal setup')
-      }
-      const release = async (): Promise<void> => {
-        await terminal.terminate()
-        this.terminals.delete(terminal)
-      }
-      void terminal.done.then(release, release).catch((_automaticReleaseFailure: unknown) => {
-        // Retain the terminal so service disposal can retry its cleanup transaction.
-      })
-      return terminal
-    } finally {
-      this.terminalSetups.delete(setup)
-      done.resolve()
-    }
-  }
 }
 
 export default E2BSubprocessRuntime
+
+export {
+  bootstrapEnvironment,
+  readRemoteEnvironment,
+  serializeRemoteEnvironment,
+} from './environment.ts'
+export { asError, commandOpts, delay, signalOpts, signalRemoteGroups } from './remote.ts'

@@ -39,14 +39,14 @@ interface ConfineCall {
 const passthrough = (argv: readonly string[]): ConfinedArgv =>
   ({ argv: [...argv], enforcement: 'full', denialSignatures: ['access is denied', 'access to the path'], runnerFailureRules: [] })
 
-/** A subprocess service whose spawn() throws SYNCHRONOUSLY — the paths the async service never produces. */
+/** A subprocess service whose spawn() rejects with the scripted creation failure. */
 function throwingSubprocessRuntime(error: unknown): new (ctx: Context) => Service {
   return class extends Service {
     constructor(ctx: Context) {
       super(ctx, 'subprocess')
     }
 
-    spawn(): never {
+    async spawn(): Promise<never> {
       throw error
     }
   }
@@ -234,7 +234,7 @@ describe.skipIf(!pwshAvailable())('SandboxPwshExecutor', () => {
       .rejects.toThrow(SandboxUnavailableError)
   }, 30_000)
 
-  it('a SYNCHRONOUS attributable spawn rejection in run() fails closed, an unattributable one rethrows', async () => {
+  it('an attributable spawn rejection in run() fails closed, an unattributable one rethrows', async () => {
     const attributable = Object.assign(new Error('sync-enoent'), { code: 'ENOENT', syscall: 'spawn node', path: 'node' })
     const { executor: closed } = await setup(() => ({
       argv: ['node', '--', 'pwsh'],
@@ -251,7 +251,7 @@ describe.skipIf(!pwshAvailable())('SandboxPwshExecutor', () => {
       .rejects.toThrow('sync-emfile')
   }, 30_000)
 
-  it('a SYNCHRONOUS spawn rejection in start() follows the same attribution split', async () => {
+  it('a spawn rejection in start() follows the same attribution split', async () => {
     const attributable = Object.assign(new Error('sync-enoent-start'), { code: 'ENOENT', syscall: 'spawn node', path: 'node' })
     const { executor: closed } = await setup(() => ({
       argv: ['node', '--', 'pwsh'],
@@ -259,13 +259,13 @@ describe.skipIf(!pwshAvailable())('SandboxPwshExecutor', () => {
       denialSignatures: [],
       runnerFailureRules: [{ fatalSignatures: ['fake-runner: '] }],
     }), throwingSubprocessRuntime(attributable))
-    expect(() => closed.start(closed.resolve({ command: 'echo never', sandboxPolicy: RO })))
-      .toThrow(SandboxUnavailableError)
+    await expect(closed.start(closed.resolve({ command: 'echo never', sandboxPolicy: RO })))
+      .rejects.toThrow(SandboxUnavailableError)
 
     const foreign = Object.assign(new Error('sync-emfile-start'), { code: 'EMFILE', syscall: 'spawn', path: 'node' })
     const { executor: passthroughError } = await setup(undefined, throwingSubprocessRuntime(foreign))
-    expect(() => passthroughError.start(passthroughError.resolve({ command: 'echo never', sandboxPolicy: RO })))
-      .toThrow('sync-emfile-start')
+    await expect(passthroughError.start(passthroughError.resolve({ command: 'echo never', sandboxPolicy: RO })))
+      .rejects.toThrow('sync-emfile-start')
   }, 30_000)
 
   it('a runner that REFUSES at runtime (fatal signature, nonzero exit) fails closed too', async () => {
@@ -281,7 +281,7 @@ describe.skipIf(!pwshAvailable())('SandboxPwshExecutor', () => {
 
   it('background confined runs stamp clean facts at settlement', async () => {
     const { executor } = await setup()
-    const clean = executor.start(executor.resolve({ command: 'echo background-ok', sandboxPolicy: RO }))
+    const clean = await executor.start(executor.resolve({ command: 'echo background-ok', sandboxPolicy: RO }))
     await clean.done
     expect(clean.sandbox).toEqual({ mode: 'read-only', denied: false, enforcement: 'full' })
   }, 30_000)
@@ -290,7 +290,7 @@ describe.skipIf(!pwshAvailable())('SandboxPwshExecutor', () => {
   // coverage lives in tests/acl.e2e.ts.
   it.skipIf(process.platform === 'win32')('background denied writes stamp denied facts at settlement', async () => {
     const { executor } = await setup()
-    const denied = executor.start(executor.resolve({
+    const denied = await executor.start(executor.resolve({
       command: deniedWriteCommand,
       sandboxPolicy: RO,
     }))
@@ -298,24 +298,20 @@ describe.skipIf(!pwshAvailable())('SandboxPwshExecutor', () => {
     expect(denied.sandbox).toEqual({ mode: 'read-only', denied: true, enforcement: 'full' })
   }, 30_000)
 
-  it('background spawn rejections settle as runnerFailed facts', async () => {
+  it('background spawn rejection fails closed before publishing a process', async () => {
     const { executor } = await setup(() => ({
       argv: ['definitely-not-a-real-runner', '--', 'pwsh'],
       enforcement: 'full',
       denialSignatures: [],
       runnerFailureRules: [{ fatalSignatures: ['fake-runner: '] }],
     }))
-    const proc = executor.start(executor.resolve({ command: 'echo never', sandboxPolicy: RO }))
-    await proc.done
-    expect(proc.sandbox).toEqual({ mode: 'read-only', denied: false, enforcement: 'full', runnerFailed: true })
-    // The failure note surfaces through the read path.
-    const read = proc.readOutput()
-    expect(read.delta).toContain('spawn failed')
+    await expect(executor.start(executor.resolve({ command: 'echo never', sandboxPolicy: RO })))
+      .rejects.toThrow(SandboxUnavailableError)
   }, 30_000)
 
   it('danger-full-access background runs bypass confine and carry no facts', async () => {
     const { executor, calls } = await setup()
-    const proc = executor.start(executor.resolve({
+    const proc = await executor.start(executor.resolve({
       command: 'echo full-bg',
       sandboxPolicy: { mode: 'danger-full-access', workspaceRoot: '/ws' },
     }))

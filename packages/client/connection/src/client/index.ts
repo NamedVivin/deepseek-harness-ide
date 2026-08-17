@@ -1,15 +1,11 @@
 /**
- * Browser wire client. The plugin selects fixture or HTTP transport, provides
- * the shared API client, and lets the runtime object layer start the stream
- * controller with its sinks.
+ * Carrier-neutral Client handle. The selected provider supplies physical API
+ * and RPC carriage; the runtime object layer owns the shared stream loop.
  */
 import type { Context } from '@deepseek-ai/cordis'
-import type { HostDescription, IApiClient } from './api.ts'
+import type { IApiClient } from '@deepseek-ai/dsh-host-apiproxy/client'
+import type { HostDescription } from './api.ts'
 import { ConnectionController, type ConnectionConfig, type ConnectionSinks, type ConnectionState } from './connection.ts'
-import { FixtureApiClient } from './fixture.ts'
-import { WebApiClient } from './web-api-client.ts'
-import { createWebConnectionRpc } from './rpc.ts'
-import { isLoopbackHostname } from '../loopback-hostname.ts'
 import type { ClientConnectionRpc } from '../rpc.ts'
 
 // ---- Contract re-exports (browser-safe apiproxy channels + core types) ----
@@ -32,6 +28,7 @@ export type {
 } from './api.ts'
 export {
   RpcId,
+  SESSION_SEARCH_RESULT_LIMIT,
   AbstractApiClient,
   transportError,
 } from './api.ts'
@@ -40,6 +37,7 @@ export {
 // controller remains package-internal.
 export type { ConnectionConfig, ConnectionSinks, ConnectionState }
 export type { ClientConnectionRpc } from '../rpc.ts'
+export { ClientConnectionTransport } from './transport.ts'
 
 /** Observable Host description published by each completed connection handshake. */
 export interface HostDescriptionSource {
@@ -49,8 +47,8 @@ export interface HostDescriptionSource {
   subscribe(listener: () => void): () => void
 }
 
-/** Required services (none — this is the wire root). */
-export const inject: string[] = []
+/** Exactly one Client carrier provider is required before the handle starts. */
+export const inject = ['connectionTransport']
 
 /**
  * The ctx.connection service API: the API client plus a one-shot
@@ -58,7 +56,7 @@ export const inject: string[] = []
  * is ready — connection stays consumer-agnostic).
  */
 export interface ConnectionHandle {
-  /** Shared api client (fixture or real, decided at boot from the page URL). */
+  /** Shared domain API client supplied by the selected carrier. */
   readonly api: IApiClient
   /** Whether the current page authority is loopback; non-browser contexts default to true. */
   readonly isLoopback: boolean
@@ -78,15 +76,13 @@ export interface ConnectionHandle {
 }
 
 /**
- * Client plugin body: pick the api by page mode and provide ctx.connection.
- * @param ctx - client cordis context.
+ * Client plugin body: consume the selected carrier and provide ctx.connection.
+ * @param ctx - Client Cordis context carrying exactly one transport provider.
  */
 export function apply(ctx: Context): void {
-  const pageLocation = typeof location === 'undefined' ? undefined : location
-  const fixture = pageLocation !== undefined && new URLSearchParams(pageLocation.search).has('fixture')
-  const fixtureClient = fixture ? new FixtureApiClient() : undefined
-  const api: IApiClient = fixtureClient ?? new WebApiClient()
-  const rpc = fixtureClient?.rpc ?? createWebConnectionRpc()
+  const transport = ctx.connectionTransport
+  const api: IApiClient = transport.api
+  const rpc = transport.rpc
   let started = false
   let description: HostDescription | undefined
   const descriptionListeners = new Set<() => void>()
@@ -103,7 +99,7 @@ export function apply(ctx: Context): void {
   }
   const handle: ConnectionHandle = {
     api,
-    isLoopback: pageLocation === undefined || isLoopbackHostname(pageLocation.hostname),
+    isLoopback: transport.isLoopback,
     hostDescription: {
       getSnapshot: () => description,
       subscribe: (listener) => {

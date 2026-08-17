@@ -20,6 +20,12 @@ import { Context, type Fiber } from '@deepseek-ai/cordis'
 import { Include } from '@deepseek-ai/cordis-plugin-include'
 import type { EntryTree } from '@deepseek-ai/cordis-plugin-loader'
 import { scopeOf, scopeParentOf, type ScopeKey } from '@deepseek-ai/dsh-scope'
+import {
+  assertPresetAdmissionProofCurrent,
+  claimPresetAdmissionProof,
+  PresetAdmissionProofError,
+  type PresetAdmissionProof,
+} from './admission.ts'
 import { PresetMountError, type AgentPreset } from './preset.ts'
 
 /** What one mounted subtree publishes about itself for the audit to read. */
@@ -119,6 +125,8 @@ export interface PresetMount {
   readonly fiber: Fiber
   /** The standing scope key agents are parented to (undefined only in torn-down records). */
   readonly key: ScopeKey | undefined
+  /** Opaque authority binding this standing generation to its admission policy. */
+  readonly proof: PresetAdmissionProof
 }
 
 const mounts = new Set<PresetMount>()
@@ -326,10 +334,19 @@ function mountDetail(error: unknown): string {
  * the caller receives no disposer. A rejection leaves nothing mounted.
  * @param agentCtx - the agent's scope context, from the agent factory's `setup`.
  * @param preset - the resolved preset to compose the agent from.
- * @throws when `agentCtx` carries no scope, a row is unusable, or a row
- * published a service into the root realm.
+ * @param proof - current, single-use authority issued for this generation.
+ * @throws when the proof is absent, forged, stale, or already claimed; when
+ * `agentCtx` carries no scope; when a row is unusable; or when a row publishes
+ * a service into the root realm.
  */
-export async function mountPreset(agentCtx: Context, preset: AgentPreset): Promise<void> {
+export async function mountPreset(
+  agentCtx: Context,
+  preset: AgentPreset,
+  proof: PresetAdmissionProof,
+): Promise<void> {
+  // Claim before any scope or plugin operation: possession of a resolved
+  // AgentPreset alone must never be low-level mount authority.
+  claimPresetAdmissionProof(proof, preset.id)
   const scope = scopeOf(agentCtx)
   if (scope === undefined) {
     throw new Error(
@@ -365,7 +382,10 @@ export async function mountPreset(agentCtx: Context, preset: AgentPreset): Promi
         + 'a preset service must sit behind an `isolate` realm or move to the host composition',
       )
     }
-    mounts.add({ presetId: preset.id, fiber, key: scopeOf(agentCtx) })
+    // A contribution may attach or detach while the async subtree starts. Do
+    // not publish a generation admitted by the superseded policy.
+    assertPresetAdmissionProofCurrent(proof, preset.id)
+    mounts.add(Object.freeze({ presetId: preset.id, fiber, key: scopeOf(agentCtx), proof }))
   } catch (error) {
     try {
       await handle.dispose()
@@ -376,6 +396,7 @@ export async function mountPreset(agentCtx: Context, preset: AgentPreset): Promi
       // Swallows only this subtree's teardown failure. The mount error below is
       // the actionable one, and the discarded fiber is unreachable either way.
     }
+    if (error instanceof PresetAdmissionProofError) throw error
     throw new PresetMountError(preset.id, `${mountDetail(error)} (${preset.path})`, { cause: error })
   }
 }

@@ -89,9 +89,9 @@ it('hot-reloads a real client-plugin source edit without refreshing the page', a
   const failures: unknown[] = []
   try {
     subprocessFiber = await subprocessCtx.plugin(LocalSubprocessRuntime)
-    watcher = subprocessCtx.subprocess.spawn(spawnSpec(['pnpm', 'run', 'dev:web'], REPO_ROOT))
+    watcher = await subprocessCtx.subprocess.spawn(spawnSpec(['pnpm', 'run', 'dev:web'], REPO_ROOT))
     await waitForOutput(watcher, /dev-web: watching/, 'pnpm run dev:web')
-    host = subprocessCtx.subprocess.spawn(spawnSpec(
+    host = await subprocessCtx.subprocess.spawn(spawnSpec(
       [process.execPath, binPath, 'web', '--port', '0'],
       world,
       {

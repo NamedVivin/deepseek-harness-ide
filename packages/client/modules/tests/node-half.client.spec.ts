@@ -1,14 +1,13 @@
 /** Node-half composition diagnostics for package metadata and built client bundles. */
 
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
-import type { IncomingMessage, ServerResponse } from 'node:http'
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { WebServer, WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import { ClientModuleRegistry } from '../src/index.ts'
+import { parseBootManifest } from '../src/client/manifest.ts'
 
 let root: string | undefined
 
@@ -37,8 +36,8 @@ function writePackage(
   return clientPath
 }
 
-/** Construct the node-half service and capture its plugin-bundle route. */
-function constructWithRoute(packageNames: string[]): { service: ClientModuleRegistry; route: WebRoute } {
+/** Construct the carrier-neutral node-half service. */
+function construct(packageNames: string[]): ClientModuleRegistry {
   const ctx = new Context()
   ctx.baseUrl = pathToFileURL(root!).href + '/'
   ctx.provide('loader', {
@@ -48,27 +47,31 @@ function constructWithRoute(packageNames: string[]): { service: ClientModuleRegi
       }
     },
   })
-  let route: WebRoute | undefined
-  const webServer: Pick<WebServer, 'port' | 'register' | 'tapIndex'> = {
-    port: 0,
-    register: (candidate) => {
-      if (candidate.path === '/plugins') route = candidate
-      return () => {}
-    },
-    tapIndex: () => () => {},
-  }
-  ctx.provide('webServer', webServer as WebServer)
-  const service = new ClientModuleRegistry(ctx)
-  if (route === undefined) throw new Error('client bundle route was not registered')
-  return { service, route }
-}
-
-/** Construct the node-half service over the enabled fixture entries. */
-function construct(packageNames: string[]): ClientModuleRegistry {
-  return constructWithRoute(packageNames).service
+  ctx.provide('clientModuleDelivery', {
+    bundleUrl: (id: string, revision: string) => `test://plugins/${id}?rev=${revision}`,
+    install: () => () => {},
+    resolveBundleUrl: () => undefined,
+  })
+  return new ClientModuleRegistry(ctx)
 }
 
 describe('client bundle activation', () => {
+  it('publishes the Host-readable manifest parser separately from the browser bundle', () => {
+    const packageJson = JSON.parse(
+      readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+    ) as { exports: Record<string, unknown>; files: string[] }
+    expect(packageJson.exports['./manifest']).toEqual({
+      types: './lib/types/client/manifest.d.ts',
+      default: './lib/types/client/manifest.js',
+    })
+    expect(packageJson.files).toContain('lib/types/client/manifest.js')
+    expect(parseBootManifest({ rev: 'empty', entries: [] })).toEqual({
+      rev: 'empty',
+      modules: [],
+      plugins: [],
+    })
+  })
+
   it('allows sibling dsh roles', () => {
     const currentName = '@fixture/current-client-field'
     const clientPath = writePackage(currentName, {
@@ -114,39 +117,4 @@ describe('client bundle activation', () => {
     expect(String(thrown)).not.toContain('pnpm run build')
   })
 
-  it('serves the source map beside a registered client bundle', async () => {
-    const packageName = '@fixture/source-map'
-    const clientPath = writePackage(packageName)
-    mkdirSync(dirname(clientPath), { recursive: true })
-    writeFileSync(clientPath, 'module.exports = {}\n')
-    const map = '{"version":3,"sources":["src/client/index.tsx"]}\n'
-    writeFileSync(`${clientPath}.map`, map)
-    const { route } = constructWithRoute([packageName])
-    let status = 0
-    let headers: Record<string, string> | undefined
-    let body = ''
-    const response = {
-      writeHead(nextStatus: number, nextHeaders?: Record<string, string>) {
-        status = nextStatus
-        headers = nextHeaders
-        return response
-      },
-      end(chunk?: Uint8Array) {
-        body = chunk === undefined ? '' : Buffer.from(chunk).toString('utf8')
-        return response
-      },
-    } as unknown as ServerResponse
-
-    await route.handler({
-      method: 'GET',
-      url: `/plugins/${packageName}/client.js.map`,
-    } as IncomingMessage, response)
-
-    expect(status).toBe(200)
-    expect(headers).toEqual({
-      'content-type': 'application/json; charset=utf-8',
-      'cache-control': 'no-cache',
-    })
-    expect(body).toBe(map)
-  })
 })

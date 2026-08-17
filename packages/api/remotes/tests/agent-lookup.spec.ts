@@ -92,6 +92,36 @@ describe('API Remote Agent resolver races', () => {
     await ctx.fiber.dispose()
   })
 
+  it('preserves a recognized Host setup refusal before cold resume', async () => {
+    const ctx = await createContext()
+    const sessionId = sid('host-policy-refusal')
+    const meta = header(sessionId)
+    const refusal = new Error('desktop preset refused')
+    provideSession(ctx, meta, () => Promise.resolve({ meta, events: [] }))
+    const resume = vi.spyOn(ctx.agents, 'resume')
+
+    const result = await createApiRemoteAgentResolver(ctx, {
+      setup: () => { throw refusal },
+      mapResumeFailure: error => error === refusal
+        ? {
+          code: 'desktop-preset-unsupported',
+          message: refusal.message,
+          details: { agentPreset: 'legacy' },
+        }
+        : undefined,
+    })(sessionId)
+
+    expect(result).toEqual({
+      error: {
+        code: 'desktop-preset-unsupported',
+        message: 'desktop preset refused',
+        details: { agentPreset: 'legacy' },
+      },
+    })
+    expect(resume).not.toHaveBeenCalled()
+    await ctx.fiber.dispose()
+  })
+
   it('reclassifies failed resumes after a live or attached subagent wins publication', async () => {
     for (const winner of ['agent', 'session'] as const) {
       const ctx = await createContext()

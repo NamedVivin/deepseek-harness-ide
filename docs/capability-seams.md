@@ -63,6 +63,10 @@ flowchart LR
   pkg_workspace["workspace"]
   svc_messageFeedback["ctx.messageFeedback<br/>Lifecycle-bound message feedback"]
   svc_workspaceRegistry["ctx.workspaceRegistry<br/>Workspace entity registry"]
+  pkg_host_workspace_files["host-workspace-files"]
+  svc_workspaceFiles["ctx.workspaceFiles<br/>Workspace-scoped IDE file gateway"]
+  pkg_host_workspace_registration["host-workspace-registration"]
+  svc_workspaceRegistration["ctx.workspaceRegistration<br/>Host-owned Workspace registration"]
   svc_sessionQuery["ctx.sessionQuery<br/>Session reads, traces, filters, and search"]
   pkg_session_reference["session-reference"]
   pkg_tool_session_query["tool-session-query"]
@@ -113,16 +117,21 @@ flowchart LR
   svc_e2b["ctx.e2b<br/>E2B sandbox lifecycle owner"]
   pkg_fs_e2b["fs-e2b"]
   pkg_subprocess_e2b["subprocess-e2b"]
+  pkg_subprocess_pty_e2b["subprocess-pty-e2b"]
   pkg_subprocess["subprocess"]
   svc_subprocess["ctx.subprocess<br/>Subprocess seam"]
   pkg_subprocess_local["subprocess-local"]
+  pkg_subprocess_guardian["subprocess-guardian"]
   pkg_bash_local["bash-local"]
   pkg_bash_sandbox["bash-sandbox"]
-  pkg_terminal_bash["terminal-bash"]
   pkg_lsp_stdio["lsp-stdio"]
   pkg_subagent_acp["subagent-acp"]
   pkg_subagent_codex["subagent-codex"]
   pkg_subagent_claude_code["subagent-claude-code"]
+  pkg_subprocess_pty["subprocess-pty"]
+  svc_subprocessPty["ctx.subprocessPty<br/>PTY subprocess seam"]
+  pkg_subprocess_pty_local["subprocess-pty-local"]
+  pkg_terminal_bash["terminal-bash"]
   pkg_shell["shell"]
   svc_shell["ctx.shell<br/>Bash executor seam"]
   pkg_pwsh_local["pwsh-local"]
@@ -171,16 +180,26 @@ flowchart LR
   svc_spillStore["ctx.spillStore<br/>Spill storage seam"]
   pkg_spill_local["spill-local"]
   pkg_spill_policy["spill-policy"]
-  pkg_directory_picker["directory-picker"]
+  pkg_host_directory_picker["host-directory-picker"]
   svc_directoryPicker["ctx.directoryPicker<br/>Workspace-directory picking seam"]
-  pkg_directory_picker_native["directory-picker-native"]
-  pkg_directory_picker_browse["directory-picker-browse"]
-  pkg_webserver["webserver"]
+  pkg_host_directory_picker_native["host-directory-picker-native"]
+  pkg_host_directory_picker_browse["host-directory-picker-browse"]
+  pkg_host_directory_picker_electron["host-directory-picker-electron"]
+  pkg_host_webserver["host-webserver"]
   svc_webServer["ctx.webServer<br/>HTTP route registration"]
-  pkg_connection["connection"]
-  pkg_modules["modules"]
-  pkg_hmr["hmr"]
+  pkg_client_connection_web["client-connection-web"]
+  pkg_client_modules_web["client-modules-web"]
+  pkg_client_hmr["client-hmr"]
+  pkg_client_modules["client-modules"]
+  svc_clientModuleDelivery["ctx.clientModuleDelivery<br/>Client bundle delivery seam"]
+  pkg_client_modules_desktop["client-modules-desktop"]
   svc_clientModules["ctx.clientModules<br/>Client plugin graph host"]
+  pkg_client_connection_desktop["client-connection-desktop"]
+  pkg_client_connection["client-connection"]
+  svc_connection["ctx.connection<br/>Carrier-neutral Connection registry"]
+  pkg_client_runtime["client-runtime"]
+  svc_connectionTransport["ctx.connectionTransport<br/>Connection carrier seam"]
+  svc_desktopHostBridge["ctx.desktopHostBridge<br/>Sidecar-to-Electron capability bridge"]
   pkg_workflow["workflow"]
   svc_workflowEngine["ctx.workflowEngine<br/>Workflow script engine"]
   pkg_workflow_worker_thread["workflow-worker-thread"]
@@ -199,12 +218,20 @@ flowchart LR
   pkg_agent_loop --> svc_agentLoop
   pkg_agent_presets --> svc_agentPresets
   pkg_api_gateway --> svc_typertGateway
-  pkg_apiproxy --> svc_apiProxy
   pkg_approval --> svc_approval
   pkg_attachment --> svc_attachments
   pkg_attachment_local --> svc_attachments
   pkg_bash_local --> svc_shell
   pkg_bash_sandbox --> svc_shell
+  pkg_client_connection --> svc_connection
+  pkg_client_connection --> svc_connectionTransport
+  pkg_client_connection_desktop --> svc_connectionTransport
+  pkg_client_connection_desktop --> svc_desktopHostBridge
+  pkg_client_connection_web --> svc_connectionTransport
+  pkg_client_modules --> svc_clientModuleDelivery
+  pkg_client_modules --> svc_clientModules
+  pkg_client_modules_desktop --> svc_clientModuleDelivery
+  pkg_client_modules_web --> svc_clientModuleDelivery
   pkg_code_runtime --> svc_codeRuntime
   pkg_code_runtime_worker --> svc_codeRuntime
   pkg_commands --> svc_commands
@@ -215,15 +242,20 @@ flowchart LR
   pkg_cordis_host_runner --> svc_dynamicCordisRunner
   pkg_credentials --> svc_credentials
   pkg_credentials_local --> svc_credentials
-  pkg_directory_picker --> svc_directoryPicker
-  pkg_directory_picker_browse --> svc_directoryPicker
-  pkg_directory_picker_native --> svc_directoryPicker
   pkg_e2b --> svc_e2b
   pkg_fs --> svc_fs
   pkg_fs_e2b --> svc_fs
   pkg_fs_local --> svc_fs
   pkg_fs_sandbox --> svc_fs
   pkg_goal --> svc_goals
+  pkg_host_apiproxy --> svc_apiProxy
+  pkg_host_directory_picker --> svc_directoryPicker
+  pkg_host_directory_picker_browse --> svc_directoryPicker
+  pkg_host_directory_picker_electron --> svc_directoryPicker
+  pkg_host_directory_picker_native --> svc_directoryPicker
+  pkg_host_webserver --> svc_webServer
+  pkg_host_workspace_files --> svc_workspaceFiles
+  pkg_host_workspace_registration --> svc_workspaceRegistration
   pkg_invariants --> svc_invariants
   pkg_jobs --> svc_jobs
   pkg_jobs_local --> svc_jobs
@@ -234,7 +266,6 @@ flowchart LR
   pkg_lsp --> svc_lsp
   pkg_lsp_local --> svc_lsp
   pkg_message_feedback --> svc_messageFeedback
-  pkg_modules --> svc_clientModules
   pkg_permission_presets --> svc_permissionPresets
   pkg_plan_mode --> svc_planMode
   pkg_pwsh_local --> svc_shell
@@ -277,7 +308,11 @@ flowchart LR
   pkg_subagent_spawn_in_process --> svc_subagents
   pkg_subprocess --> svc_subprocess
   pkg_subprocess_e2b --> svc_subprocess
+  pkg_subprocess_guardian --> svc_subprocess
   pkg_subprocess_local --> svc_subprocess
+  pkg_subprocess_pty --> svc_subprocessPty
+  pkg_subprocess_pty_e2b --> svc_subprocessPty
+  pkg_subprocess_pty_local --> svc_subprocessPty
   pkg_system_prompt --> svc_systemPrompt
   pkg_terminal --> svc_terminals
   pkg_terminal_bash --> svc_terminals
@@ -290,7 +325,6 @@ flowchart LR
   pkg_web_search_deepseek --> svc_web
   pkg_web_search_exa --> svc_web
   pkg_web_search_perplexity --> svc_web
-  pkg_webserver --> svc_webServer
   pkg_workflow --> svc_workflowEngine
   pkg_workflow_worker_thread --> svc_workflowEngine
   pkg_workspace --> svc_workspaceRegistry
@@ -300,22 +334,30 @@ flowchart LR
   svc_agents --> pkg_acp
   svc_agents --> pkg_agent_loop
   svc_agents --> pkg_subagent_inprocess
-  svc_apiProxy --> pkg_connection
+  svc_apiProxy --> pkg_client_connection
   svc_approval --> pkg_tool_bash
   svc_approval --> pkg_tools
   svc_attachments --> pkg_host_runtime
   svc_attachments --> pkg_llm_pi_ai
-  svc_clientModules --> pkg_hmr
+  svc_clientModuleDelivery --> pkg_client_modules
+  svc_clientModules --> pkg_client_connection_desktop
+  svc_clientModules --> pkg_client_hmr
   svc_codeRuntime --> pkg_tools
   svc_compaction --> pkg_compaction_basic
+  svc_connection --> pkg_api_gateway
+  svc_connection --> pkg_client_runtime
+  svc_connectionTransport --> pkg_client_connection
   svc_cordisInspect --> pkg_tool_cordis
   svc_credentials --> pkg_apiproxy
   svc_credentials --> pkg_llm_deepseek
   svc_credentials --> pkg_llm_pi_ai
-  svc_directoryPicker --> pkg_apiproxy
+  svc_desktopHostBridge --> pkg_host_directory_picker_electron
+  svc_directoryPicker --> pkg_host_apiproxy
+  svc_directoryPicker --> pkg_host_workspace_registration
   svc_dynamicCordisRunner --> pkg_tool_cordis
   svc_e2b --> pkg_fs_e2b
   svc_e2b --> pkg_subprocess_e2b
+  svc_e2b --> pkg_subprocess_pty_e2b
   svc_fs --> pkg_tool_fs
   svc_invariants --> pkg_agent
   svc_invariants --> pkg_agent_loop
@@ -377,7 +419,7 @@ flowchart LR
   svc_subprocess --> pkg_subagent_acp
   svc_subprocess --> pkg_subagent_claude_code
   svc_subprocess --> pkg_subagent_codex
-  svc_subprocess --> pkg_terminal_bash
+  svc_subprocessPty --> pkg_terminal_bash
   svc_systemPrompt --> pkg_agent_loop
   svc_systemPrompt --> pkg_tool_fs
   svc_systemPrompt --> pkg_tool_terminal
@@ -400,9 +442,9 @@ flowchart LR
   svc_typert --> pkg_typert_loader
   svc_userQuestions --> pkg_tool_ask_user
   svc_web --> pkg_tool_web
-  svc_webServer --> pkg_connection
-  svc_webServer --> pkg_hmr
-  svc_webServer --> pkg_modules
+  svc_webServer --> pkg_client_connection_web
+  svc_webServer --> pkg_client_hmr
+  svc_webServer --> pkg_client_modules_web
   svc_workflowEngine --> pkg_tool_ralph
   svc_workflowEngine --> pkg_tool_workflow
   svc_workspaceRegistry --> pkg_apiproxy
@@ -427,6 +469,8 @@ flowchart LR
 | `ctx.storageDomain` | `core` | [`storage-domain`](../packages/storage/storage-domain) | - | [`workspace`](../packages/workspace/workspace), [`message-feedback`](../packages/feedback/message-feedback) | - | Waits for every configured backend, then publishes the domain form as one lifecycle-bound service for typed durable state. |
 | `ctx.messageFeedback` | `core` | [`message-feedback`](../packages/feedback/message-feedback) | - | - | - | Owns local per-assistant-message feedback, lifecycle and target validation, per-item compare-and-set, and the Host unary Remote contract without entering Session history or telemetry. |
 | `ctx.workspaceRegistry` | `core` | [`workspace`](../packages/workspace/workspace) | - | `apiproxy` | - | Owns WorkspaceId-branded records over the domain facility; stable sessionIds accounts drive Host RPC and GUI projections. |
+| `ctx.workspaceFiles` | `core` | [`host-workspace-files`](../packages/host/workspace-files) | - | - | - | Typert Remotes accept Host-issued WorkspaceIds and relative identities, then enforce bounded listing, text reads, containment, and compare-and-swap saves through the selected filesystem provider. |
+| `ctx.workspaceRegistration` | `core` | [`host-workspace-registration`](../packages/host/workspace-registration) | - | - | - | The native-picker Remote consumes the selected path inside the Host and returns only the registered Workspace projection; renderer requests carry no authority-bearing path. |
 | `ctx.sessionQuery` | `seam` | [`session-query`](../packages/session-query/session-query) | [`session-query-sqlite`](../packages/session-query/session-query-sqlite) | [`session-reference`](../packages/context/session-reference), [`tool-session-query`](../packages/session-query/tool-session-query) | - | The interface supplies exact reads, filters, and traces; its concrete backend adds full-text reconciliation, ranking, snippets, and cursor generations, while the model consumer owns workspace authority and cursor-free rendering. |
 | `ctx.sessionReferenceResolver` | `core` | [`session-reference`](../packages/context/session-reference) | - | - | - | Projects bounded current-surface conversation snapshots into durable untrusted message context; host adapters own mention syntax. |
 | `ctx.sessionTitle` | `seam` | [`session-title`](../packages/session/session-title) | [`session-title-first-prompt-llm`](../packages/session/session-title-first-prompt-llm), [`session-title-all-prompts-llm`](../packages/session/session-title-all-prompts-llm) | - | - | Owns the deterministic fallback, latest-title fold, and sole optional asynchronous provider registration. |
@@ -443,8 +487,9 @@ flowchart LR
 | `ctx.agentDefaultModel` | `core` | [`agent-default-model`](../packages/core/agent-default-model) | - | [`headless`](../packages/bundle/headless), [`host-apiproxy`](../packages/host/apiproxy) | - | Layers the default ModelSelection through settings so direct and Host-backed Agent entry points share one state owner. |
 | `ctx.agentLoop` | `bundle` | [`agent-loop`](../packages/core/agent-loop) | - | [`agent-spine-demo`](../packages/examples/agent-spine-demo) | - | The one concrete loop plugin; extension packages depend on dsh-agent events and services, not on this package. |
 | `ctx.goals` | `core` | [`goal`](../packages/goal/goal) | - | - | - | Folds revisioned objective state from the session log and keeps live continuation activation process-local. |
-| `ctx.e2b` | `core` | [`e2b`](../packages/e2b/e2b) | - | [`fs-e2b`](../packages/e2b/fs-e2b), [`subprocess-e2b`](../packages/e2b/subprocess-e2b) | - | Owns one shared E2B SDK handle, remote working directory, and final sandbox disposition so both fundamental E2B providers inhabit the same Linux runtime. |
-| `ctx.subprocess` | `seam` | [`subprocess`](../packages/subprocess/subprocess) | [`subprocess-local`](../packages/subprocess/subprocess-local), [`subprocess-e2b`](../packages/e2b/subprocess-e2b) | [`bash-local`](../packages/shell/bash-local), [`bash-sandbox`](../packages/shell/bash-sandbox), [`terminal-bash`](../packages/terminal/terminal-bash), [`lsp-stdio`](../packages/lsp/lsp-stdio), [`subagent-acp`](../packages/subagent/subagent-acp), [`subagent-codex`](../packages/subagent/subagent-codex), [`subagent-claude-code`](../packages/subagent/subagent-claude-code) | - | The bash executors, the PTY shell backend, the LSP host, and the out-of-process ACP, Codex, and Claude Code subagent backends spawn through ctx.subprocess; the service owns process coordinates, tree/session lifetime, stdio dispositions, terminal mechanics, and kill escalation. |
+| `ctx.e2b` | `core` | [`e2b`](../packages/e2b/e2b) | - | [`fs-e2b`](../packages/e2b/fs-e2b), [`subprocess-e2b`](../packages/e2b/subprocess-e2b), [`subprocess-pty-e2b`](../packages/e2b/subprocess-pty-e2b) | - | Owns one shared E2B SDK handle, remote working directory, and final sandbox disposition so both fundamental E2B providers inhabit the same Linux runtime. |
+| `ctx.subprocess` | `seam` | [`subprocess`](../packages/subprocess/subprocess) | [`subprocess-local`](../packages/subprocess/subprocess-local), [`subprocess-e2b`](../packages/e2b/subprocess-e2b), [`subprocess-guardian`](../packages/subprocess/subprocess-guardian) | [`bash-local`](../packages/shell/bash-local), [`bash-sandbox`](../packages/shell/bash-sandbox), [`lsp-stdio`](../packages/lsp/lsp-stdio), [`subagent-acp`](../packages/subagent/subagent-acp), [`subagent-codex`](../packages/subagent/subagent-codex), [`subagent-claude-code`](../packages/subagent/subagent-claude-code) | - | Generic child-process consumers use async spawn, explicit stdio dispositions, collected-output readers, tree-scoped termination, and bounded joins. Desktop composition selects the guardian provider so Electron main owns the process trees. |
+| `ctx.subprocessPty` | `seam` | [`subprocess-pty`](../packages/subprocess/subprocess-pty) | [`subprocess-pty-local`](../packages/subprocess/subprocess-pty-local), [`subprocess-pty-e2b`](../packages/e2b/subprocess-pty-e2b) | [`terminal-bash`](../packages/terminal/terminal-bash) | - | PTY allocation, byte transport, foreground process groups, signals, and terminal-session cleanup remain separate from generic subprocess spawning. |
 | `ctx.shell` | `seam` | [`shell`](../packages/shell/shell) | [`bash-local`](../packages/shell/bash-local), [`bash-sandbox`](../packages/shell/bash-sandbox), [`pwsh-local`](../packages/shell/pwsh-local) | [`tool-bash`](../packages/shell/tool-bash), [`tool-pwsh`](../packages/shell/tool-pwsh), [`hooks-claude-code`](../packages/hooks/hooks-claude-code), [`hooks-codex`](../packages/hooks/hooks-codex) | - | The model-facing shell tools and hook bridges consume this seam; sandboxed, remote, or PowerShell executors replace bash-local without touching them. |
 | `ctx.shellEnv` | `core` | [`shell-env`](../packages/shell/shell-env) | - | [`tool-bash`](../packages/shell/tool-bash), [`tool-pwsh`](../packages/shell/tool-pwsh) | - | Plugins declare effect-scoped DSH_* facts; each shell tool collects one trusted snapshot per execution and its executor rebuilds the namespace. |
 | `ctx.terminals` | `seam` | [`terminal`](../packages/terminal/terminal) | [`terminal-bash`](../packages/terminal/terminal-bash) | [`tool-terminal`](../packages/terminal/tool-terminal) | - | The registry owns exact-Agent session identity and cleanup; backends own terminal mechanics, while tool-terminal exposes the owner-scoped model tools. |
@@ -459,12 +504,16 @@ flowchart LR
 | `ctx.jobs` | `seam` | [`jobs`](../packages/jobs/jobs) | [`jobs-local`](../packages/jobs/jobs-local) | [`tool-bash`](../packages/shell/tool-bash), [`tool-terminal`](../packages/terminal/tool-terminal), [`tool-subagent`](../packages/subagent/tool-subagent), [`tool-jobs`](../packages/jobs/tool-jobs) | - | Producers (background bash, PTY sends, and subagent delegations) register running work; tool-jobs is the model-facing controller that reads, lists, and kills it; jobs-local is the process-local registry. |
 | `ctx.web` | `seam` | [`web`](../packages/web/web) | [`web-search-exa`](../packages/web/web-search-exa), [`web-search-perplexity`](../packages/web/web-search-perplexity), [`web-search-deepseek`](../packages/web/web-search-deepseek), [`web-fetch-http`](../packages/web/web-fetch-http) | [`tool-web`](../packages/web/tool-web) | - | Search and fetch providers register into one ctx.web seam; tool-web owns the stable model-facing names. |
 | `ctx.spillStore` | `seam` | [`spill`](../packages/spill/spill) | [`spill-local`](../packages/spill/spill-local) | [`spill-policy`](../packages/spill/spill-policy) | - | The backend saves oversized tool text and returns a model-facing locator plus retrieval hint; spill-policy is the tools/post-execute consumer that decides when to spill. |
-| `ctx.directoryPicker` | `seam` | `directory-picker` | `directory-picker-native`, `directory-picker-browse` | `apiproxy` | - | Discriminated interaction capability: the native backend opens one OS chooser on the host display, the browse backend serves listing/creation primitives for the in-app browser; dual-face backends fill ui-workspace directory-flow slots from their browser halves (no wire advertisement). |
-| `ctx.webServer` | `core` | `webserver` | - | `connection`, `modules`, `hmr` | - | Plain node:http carrier: named-route registry, index transform taps, and the static dist fallback; web-transport plugins register their own routes. |
-| `ctx.clientModules` | `core` | `modules` | - | `hmr` | - | Composes the __DSH_BOOT__ entry graph from an incremental dsh.client scan, serves plugin bundles, and notifies rebuilt/graph-changed subscribers. |
+| `ctx.directoryPicker` | `seam` | [`host-directory-picker`](../packages/host/directory-picker) | [`host-directory-picker-native`](../packages/host/directory-picker-native), [`host-directory-picker-browse`](../packages/host/directory-picker-browse), [`host-directory-picker-electron`](../packages/host/directory-picker-electron) | [`host-apiproxy`](../packages/host/apiproxy), [`host-workspace-registration`](../packages/host/workspace-registration) | - | Discriminated interaction capability: native backends open one OS chooser on the Host display, while the browse backend serves listing and creation primitives for the in-app browser. Desktop forwards its chooser through the Host-initiated Electron bridge. |
+| `ctx.webServer` | `core` | [`host-webserver`](../packages/host/webserver) | - | [`client-connection-web`](../packages/client/connection-web), [`client-modules-web`](../packages/client/modules-web), [`client-hmr`](../packages/client/hmr) | - | Plain node:http carrier: named-route registry, index transform taps, and the static dist fallback; web-transport plugins register their own routes. |
+| `ctx.clientModuleDelivery` | `seam` | [`client-modules`](../packages/client/modules) | [`client-modules-web`](../packages/client/modules-web), [`client-modules-desktop`](../packages/client/modules-desktop) | [`client-modules`](../packages/client/modules) | - | Exactly one provider assigns revisioned bundle URLs and installs physical delivery for the shared Host-produced Client plugin graph. |
+| `ctx.clientModules` | `core` | [`client-modules`](../packages/client/modules) | - | [`client-hmr`](../packages/client/hmr), [`client-connection-desktop`](../packages/client/connection-desktop) | - | Composes the __DSH_BOOT__ entry graph from an incremental dsh.client scan, hashes bundles, and notifies rebuilt and graph-changed subscribers without selecting a physical carrier. |
+| `ctx.connection` | `core` | [`client-connection`](../packages/client/connection) | - | [`api-gateway`](../packages/api/gateway), [`client-runtime`](../packages/client/runtime) | - | The Host owns logical RPC registration, target resolution, response delivery, and downlink sources; the Client owns one stable handle and reconnect generation state. |
+| `ctx.connectionTransport` | `seam` | [`client-connection`](../packages/client/connection) | [`client-connection-web`](../packages/client/connection-web), [`client-connection-desktop`](../packages/client/connection-desktop) | [`client-connection`](../packages/client/connection) | - | Exactly one provider attaches Web routes or child-IPC handlers to the same logical Host router and supplies the corresponding Client transport. |
+| `ctx.desktopHostBridge` | `core` | [`client-connection-desktop`](../packages/client/connection-desktop) | - | [`host-directory-picker-electron`](../packages/host/directory-picker-electron) | - | A closed Host-initiated method map lets the Node sidecar request Electron-main capabilities without exposing those methods to the renderer. |
 | `ctx.workflowEngine` | `seam` | [`workflow`](../packages/workflow/workflow) | [`workflow-worker-thread`](../packages/workflow/workflow-worker-thread) | [`tool-workflow`](../packages/workflow/tool-workflow), [`tool-ralph`](../packages/workflow/tool-ralph) | - | One engine per context, as in bash, with no named-provider registry; the general workflow and fixed Ralph consumers start runs whose agent() calls fan out through ctx.subagents. |
 | `ctx.lsp` | `seam` | [`lsp`](../packages/lsp/lsp) | `lsp-local` | [`tool-lsp`](../packages/lsp/tool-lsp) | - | Provider registration and selection plus normalized query execution over exactly four operations; the seam offers no protocol escape hatch, so a backend translates into the normalized request and result. |
-| `ctx.apiProxy` | `core` | `apiproxy` | - | `connection` | - | The transport-agnostic host gateway face: it dispatches browser API calls, and each open host stream subscribes to the events it forwards rather than being pushed to through a broadcast verb. |
+| `ctx.apiProxy` | `core` | [`host-apiproxy`](../packages/host/apiproxy) | - | [`client-connection`](../packages/client/connection) | - | The transport-agnostic host gateway face: it dispatches browser API calls, and each open host stream subscribes to the events it forwards rather than being pushed to through a broadcast verb. |
 | `ctx.dynamicCordisRunner` | `core` | [`cordis-host-runner`](../packages/extensions/cordis-host-runner) | - | [`tool-cordis`](../packages/extensions/tool-cordis) | - | Owns the in-memory definition registry, the vm sandbox for host halves, and the request-run round trip; browser pages reach the same service over the wire through its remote namespace. |
 | `ctx.cordisInspect` | `core` | [`cordis-host-runner`](../packages/extensions/cordis-host-runner) | - | [`tool-cordis`](../packages/extensions/tool-cordis) | - | Registers host inspect providers, mirrors the client provider manifest, and routes client queries through the dynamic Cordis transport. |
 

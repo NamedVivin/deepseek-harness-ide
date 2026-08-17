@@ -27,6 +27,13 @@ linkWorkspacePackages: true
 overrides:
   '@deepseek-ai/cosmokit': 'link:vendor/cosmokit'
   '@deepseek-ai/schemastery': 'link:vendor/schemastery'
+  # Forge 7 still requests rebuild 3, whose transitive git dependency is
+  # rejected by pnpm's exotic-subdependency policy. Rebuild 4 uses registry
+  # releases and supports the repository's Node 24 packaging runtime.
+  '@electron/rebuild': '4.2.0'
+  # Packager's legacy extractor does not finish deflated entries on Node 24.
+  # Electron's maintained drop-in extractor supports the desktop build matrix.
+  '@electron/packager@18.4.4>extract-zip': 'npm:@electron-internal/extract-zip@1.0.5'
 
 peerDependencyRules:
   allowedVersions:
@@ -50,10 +57,18 @@ allowBuilds:
   node-addon-require-builtin: false
   # JSONL durability calls MoveFileExW with write-through publication on Windows.
   koffi: true
+  # The desktop shell downloads the pinned Electron runtime used by Forge.
+  electron: true
+  # Deterministic desktop icon assembly probes the target-specific libvips payload.
+  sharp: true
+  # Forge's Squirrel maker selects the packaged 7-Zip executable for the host architecture.
+  electron-winstaller: true
+  # Forge's DMG maker uses these host-only native helpers for Finder aliases and attributes.
+  fs-xattr: true
+  macos-alias: true
   # The Python runtime deploy includes the reviewed workspace postinstall that
   # restores the executable bit on node-pty's macOS spawn helper.
-  '@deepseek-ai/dsh-subprocess-local@file:packages/subprocess/subprocess-local': true
-
+  '@deepseek-ai/dsh-subprocess-pty-local@file:packages/subprocess/subprocess-pty-local': true
 minimumReleaseAgeExclude:
   # Fresh pi-ai releases carry the model catalog updates that are the whole
   # point of bumping it; waiting out the release age would defeat that.

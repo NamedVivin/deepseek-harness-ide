@@ -16,6 +16,7 @@ import { BashTerminalBackend } from '@deepseek-ai/dsh-terminal-bash'
 import SandboxPolicyService from '@deepseek-ai/dsh-sandbox-policy'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import E2BSubprocessRuntime from '@deepseek-ai/dsh-subprocess-e2b'
+import E2BSubprocessPtyRuntime from '@deepseek-ai/dsh-subprocess-pty-e2b'
 
 const fixtureRoot = fileURLToPath(new URL('../../../../examples/headless-agent/tests/fixtures/e2b/e2b/', import.meta.url))
 const binScript = join(fixtureRoot, 'bin.ts')
@@ -58,11 +59,12 @@ describe.skipIf(!process.env.E2B_API_KEY)('E2B live Loader composition', () => {
       })
       const ptyFiber = await ctx.plugin(TerminalSessionService)
       const subprocessFiber = await ctx.plugin(E2BSubprocessRuntime)
+      const subprocessPtyFiber = await ctx.plugin(E2BSubprocessPtyRuntime)
       const node = await ctx.subprocess.resolveExecutable('node')
       const relativeNodePath = posix.relative(ctx.e2b.cwd, posix.dirname(node)) || '.'
       await expect(ctx.subprocess.resolveExecutable('node', { PATH: relativeNodePath })).resolves.toBe(node)
       await expect(sandbox.files.read(profileLeakPath)).rejects.toBeInstanceOf(FileNotFoundError)
-      const environmentProbe = ctx.subprocess.spawn({
+      const environmentProbe = await ctx.subprocess.spawn({
         argv: ['/bin/bash', '-c', [
           'dsh_leak=0',
           'for dsh_pid in "$PPID" $(ps -o pid= --ppid "$PPID"); do',
@@ -113,6 +115,7 @@ describe.skipIf(!process.env.E2B_API_KEY)('E2B live Loader composition', () => {
       expect(result.viewport).not.toContain('sentinel-stale')
       await expect(sandbox.files.read(profileLeakPath)).rejects.toBeInstanceOf(FileNotFoundError)
       await session.close('environment test complete')
+      await subprocessPtyFiber.dispose()
       await subprocessFiber.dispose()
       await ptyFiber.dispose()
       await sandboxPolicyFiber.dispose()

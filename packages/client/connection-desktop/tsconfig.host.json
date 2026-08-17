@@ -1,0 +1,25 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "lib/types",
+    "tsBuildInfoFile": "lib/tsconfig.host.tsbuildinfo"
+  },
+  "files": [
+    "src/adapter.ts",
+    "src/codec.ts",
+    "src/index.ts",
+    "src/invariant.ts",
+    "src/protocol.ts",
+    "src/wire.ts"
+  ],
+  "references": [
+    { "path": "../../../vendor/cordis" },
+    { "path": "../../attachment/attachment" },
+    { "path": "../../util/brand" },
+    { "path": "../connection/tsconfig.host.json" },
+    { "path": "../modules" },
+    { "path": "../../host/apiproxy" },
+    { "path": "../../runtime-diagnostics/invariants" }
+  ]
+}

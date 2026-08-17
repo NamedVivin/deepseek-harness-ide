@@ -90,10 +90,9 @@ class FakeReader implements SubprocessOutputReader {
 }
 
 /**
- * A scriptable subprocess handle: `done` resolves with the scripted outcome
- * (or rejects with the scripted error), `terminate()` records the call, and
- * the spec's abort signal marks the handle terminated — mirroring the seam's
- * abort→terminate escalation.
+ * A scriptable subprocess handle: `done` resolves with the scripted outcome,
+ * `terminate()` records the call, and the spec's abort signal marks the handle
+ * terminated — mirroring the seam's abort→terminate escalation.
  */
 class FakeHandle implements SubprocessHandle {
   readonly pid = 4242
@@ -109,22 +108,16 @@ class FakeHandle implements SubprocessHandle {
   /** Scripted handle that drops one requested collect reader (the defensive branch). */
   readonly dropReaders: boolean
 
-  constructor(spec: SubprocessSpawnSpec, script: () => ScriptedRun | { reject: Error }, dropReaders = false) {
+  constructor(spec: SubprocessSpawnSpec, scripted: ScriptedRun, dropReaders = false) {
     this.dropReaders = dropReaders
     // The abort listener attaches BEFORE the scripted run resolves, mirroring
     // a real spawn: the escalation is armed when the process starts.
     spec.signal?.addEventListener('abort', () => { this.terminated = true }, { once: true })
-    const scripted = script()
-    if ('reject' in scripted) {
-      // A spawn failure produces no process output, so no readers exist.
-      this.collected = {}
-      this.done = Promise.reject(scripted.reject)
-    } else {
-      this.collected = {
-        ...dropReaders ? {} : { stdout: new FakeReader(scripted.stdout), stderr: new FakeReader(scripted.stderr) },
-      }
-      this.done = Promise.resolve(scripted.outcome)
+    if (spec.signal?.aborted === true) this.terminated = true
+    this.collected = {
+      ...dropReaders ? {} : { stdout: new FakeReader(scripted.stdout), stderr: new FakeReader(scripted.stderr) },
     }
+    this.done = Promise.resolve(scripted.outcome)
     this.done.then(
       () => { this.settled = true },
       () => { this.settled = true },
@@ -149,16 +142,17 @@ class FakeHandle implements SubprocessHandle {
 class FakeSubprocess extends SubprocessRuntime {
   spawns: SubprocessSpawnSpec[] = []
   override async resolveExecutable(command: string): Promise<string> { return command }
-  override spawnTerminal(): Promise<never> { throw new Error('search tools spawn pipes, never terminals') }
   handles: FakeHandle[] = []
-  /** Arms the per-spawn script; a `{ reject }` return scripts a spawn-level failure. */
+  /** Arms the per-spawn script; a `{ reject }` result rejects before a handle is published. */
   handler: (spec: SubprocessSpawnSpec) => ScriptedRun | { reject: Error } = () => runResult('')
   /** When true, spawned handles drop their collect readers (the defensive branch). */
   dropReaders = false
 
-  override spawn(spec: SubprocessSpawnSpec): SubprocessHandle {
+  override async spawn(spec: SubprocessSpawnSpec): Promise<SubprocessHandle> {
     this.spawns.push(spec)
-    const handle = new FakeHandle(spec, () => this.handler(spec), this.dropReaders)
+    const scripted = this.handler(spec)
+    if ('reject' in scripted) throw scripted.reject
+    const handle = new FakeHandle(spec, scripted, this.dropReaders)
     this.handles.push(handle)
     return handle
   }
@@ -472,10 +466,9 @@ describe('workdir derivation and signal forwarding', () => {
       .toMatchObject({ name: 'SearchError', code: 'SEARCH_ABORTED' })
   })
 
-  it('translates a spawn rejection into SEARCH_FAILED even when the signal aborts concurrently', async () => {
-    // The seam rejects only for infrastructure failures (unusable workdir,
-    // missing binary); the abort happened after dispatch, so the launch
-    // failure is the reportable cause with the original error chained.
+  it('classifies an abort that races a spawn rejection as SEARCH_ABORTED', async () => {
+    // Creation observed the caller's abort before it could publish a handle,
+    // so cancellation is the reportable cause.
     const { ctx, subprocess } = await setup()
     const controller = new AbortController()
     subprocess.handler = () => {
@@ -486,14 +479,13 @@ describe('workdir derivation and signal forwarding', () => {
     const result = await call(ctx, 'grep', { pattern: 'x' }, { signal: controller.signal })
 
     expect(result.isError).toBe(true)
-    expect(result.error).toMatchObject({ info: { name: 'SearchError', code: 'SEARCH_FAILED' } })
-    expect(text(result)).toContain('could not start')
+    expect(result.error).toMatchObject({ info: { name: 'SearchError', code: 'SEARCH_ABORTED' } })
+    expect(text(result)).toContain('aborted before completion')
   })
 
-  it('classifies a synchronous spawn-creation throw as SEARCH_FAILED', async () => {
-    // Node's spawn() throws synchronously for a NUL in argv, and the local
-    // impl can throw synchronously for other invalid specs. Creation-time
-    // failures must join the error vocabulary instead of escaping raw.
+  it('classifies a spawn-creation rejection as SEARCH_FAILED', async () => {
+    // Invalid specs reject process creation before a handle is published.
+    // Those failures must join the error vocabulary instead of escaping raw.
     const { ctx, subprocess } = await setup()
     subprocess.handler = () => { throw new Error('spawn ERR_INVALID_ARG_VALUE') }
 
@@ -504,10 +496,9 @@ describe('workdir derivation and signal forwarding', () => {
     expect(text(result)).toContain('could not start')
   })
 
-  it('classifies a synchronous spawn-creation throw after an abort as SEARCH_ABORTED', async () => {
-    // The local impl can throw synchronously when the signal aborts between
-    // the pre-spawn check and the spawn call; no process was launched, so the
-    // abort is the reportable cause.
+  it('classifies a spawn-creation rejection after an abort as SEARCH_ABORTED', async () => {
+    // The signal can abort between the pre-spawn check and process creation;
+    // no handle was published, so the abort is the reportable cause.
     const { ctx, subprocess } = await setup()
     const controller = new AbortController()
     subprocess.handler = () => {

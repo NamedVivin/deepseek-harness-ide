@@ -1,0 +1,59 @@
+{
+  "name": "@deepseek-ai/dsh-desktop-app",
+  "description": "Packaged desktop patch layer selecting IPC, local module delivery, native registration, immutable presets, and guardian subprocess ownership",
+  "version": "0.1.0-rc.5",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "directory": "packages/bundle/desktop-app"
+  },
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./invariant": {
+      "types": "./lib/types/invariant.d.ts",
+      "default": "./lib/invariant.js"
+    },
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./src/*": "./src/*",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/index.js",
+    "lib/invariant.js",
+    "cordis.patch.yml",
+    "lib/types/**/*.d.ts"
+  ],
+  "license": "MIT",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "dependencies": {
+    "@deepseek-ai/dsh-agent-presets": "workspace:^",
+    "@deepseek-ai/dsh-agent-presets-desktop": "workspace:^",
+    "@deepseek-ai/dsh-client-connection-desktop": "workspace:^",
+    "@deepseek-ai/dsh-client-modules-desktop": "workspace:^",
+    "@deepseek-ai/dsh-client-ui-directory-picker-desktop": "workspace:^",
+    "@deepseek-ai/dsh-host-directory-picker-electron": "workspace:^",
+    "@deepseek-ai/dsh-host-workspace-registration": "workspace:^",
+    "@deepseek-ai/dsh-subprocess-guardian": "workspace:^"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "workspace:^",
+    "@deepseek-ai/dsh-invariants": "workspace:^"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "workspace:^",
+    "@deepseek-ai/dsh-invariants": "workspace:^"
+  }
+}

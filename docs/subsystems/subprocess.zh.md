@@ -2,13 +2,13 @@
 
 [English](subprocess.md) | 中文
 
-子进程 seam 分为 Service Definition（[dsh-subprocess](../../packages/subprocess/subprocess)，`ctx.subprocess`）与 Service Provider（[dsh-subprocess-local](../../packages/subprocess/subprocess-local)）；它的 Consumer 是其他能力 seam 与进程外后端：[bash 执行器家族](shell.md)使用收集模式的批量输出，LSP 使用原始协议管道，PTY 后端使用终端原语，ACP（Agent Client Protocol）subagent 后端则使用通过管道传输的 ndjson，并让 stderr 采用 inherit。该 seam 拥有受管的 `DSH_*` 环境命名空间、共享的凭据清除（`scrubbedParentEnv`）与 `CollectedOutput` 形状；[dsh-shell](../../packages/shell/shell) 重导出这套词汇，使 bash 消费方保持单一导入入口。
+普通进程与终端会话是相互独立的能力 seam。[`dsh-subprocess`](../../packages/subprocess/subprocess) 定义用于可执行文件查找和受管管道进程树的 `ctx.subprocess`；[`dsh-subprocess-pty`](../../packages/subprocess/subprocess-pty) 定义用于控制终端与 provider 可观察 session 清理的可选 `ctx.subprocessPty`。[bash 执行器家族](shell.md)使用收集模式批量输出，LSP 与 ACP 使用原始协议管道，PTY 后端使用可选终端服务。`ctx.subprocess` 拥有受管 `DSH_*` 环境命名空间、共享凭据清除（`scrubbedParentEnv`）与 `CollectedOutput` 词汇；[`dsh-subprocess-collector`](../../packages/subprocess/subprocess-collector) 提供 provider-neutral 的尾部、offset、spill 与 drain 行为。
 
 源码：[`packages/subprocess/subprocess/src/types.ts`](../../packages/subprocess/subprocess/src/types.ts) 与 [`packages/subprocess/subprocess/src/index.ts`](../../packages/subprocess/subprocess/src/index.ts)
 
 ## 可执行文件查找
 
-一个提供方的 spawn 工作目录、可执行文件路径、普通进程与终端会话，和挂载的文件系统提供方处于同一路径与进程命名空间。`resolveExecutable(command, env?, signal?)` 验证绝对可执行文件路径，或通过提供方清理后的 `PATH` 加有意覆盖来解析裸名称。
+一个 provider 的 spawn 工作目录、可执行文件路径与普通进程，和挂载的文件系统 provider 处于同一路径与进程命名空间。`resolveExecutable(command, env?, signal?)` 验证绝对可执行文件路径，或通过 provider 清理后的 `PATH` 加显式覆盖来解析裸名称。独立挂载的 PTY provider 在 consumer 共享路径时必须指向同一个执行世界。
 
 ## 受管环境命名空间与捕获的输出
 
@@ -131,7 +131,7 @@ interface SubprocessSpawnSpec {
 
 ## 句柄：流、读取器与以进程树为范围的终止
 
-spawn 会立即返回一个活动句柄。收集模式的读取器接受全流字节偏移量且从不消费，因此独立的读取器不会抢走彼此的增量；管道化的流归调用方所有。终止在每个平台上都以进程树为范围：`terminate()`（唯一的终止动词）执行 SIGTERM→宽限期→SIGKILL 升级，`waitForExit()` 观察整棵进程树。这足以让消费方构建自己的分级清理流程；ACP 后端的 `disposeAcpChild` 会先关闭 stdin，让子进程收到 EOF，是仓库内的参考实现。
+`spawn(spec)` 返回 Promise，且只在 provider 取得正进程 ID 并拥有该进程树后 resolve。收集模式的读取器接受全流字节 offset 且从不消费，因此独立 reader 不会抢走彼此的增量；管道化流归调用方所有。终止在每个平台上都以进程树为范围：`terminate()`（唯一终止动词）执行 SIGTERM→宽限期→SIGKILL 升级，`waitForExit()` 观察整棵进程树。这足以让 consumer 构建自己的分级清理流程；ACP 后端先关闭 stdin 的 `disposeAcpChild` 是仓库内参考实现。
 
 ```ts type-equiv
 /**
@@ -144,7 +144,7 @@ spawn 会立即返回一个活动句柄。收集模式的读取器接受全流�
  * the handle unnoticed.
  */
 interface SubprocessHandle {
-  /** Process id (tree root); -1 when the spawn itself failed. */
+  /** Positive process id of the provider-owned tree root. */
   readonly pid: number
   /** The child's stdin, present iff spawned with `stdin: 'pipe'`. */
   readonly stdin: Writable | undefined
@@ -154,7 +154,7 @@ interface SubprocessHandle {
   readonly stderr: Readable | undefined
   /** Offset-based readers for collect-mode streams (also readable after exit). */
   readonly collected: SubprocessCollectedOutputs
-  /** Resolves at process close with exit facts; rejects only for spawn-level failures. */
+  /** Resolves at process close with exit facts; rejects only for failures after creation succeeds. */
   readonly done: Promise<SubprocessOutcome>
   /**
    * Begin the SIGTERM → `graceMs` → SIGKILL escalation on the process tree
@@ -240,13 +240,13 @@ interface SubprocessOutcome {
 
 ## 终端进程原语
 
-`spawnTerminal(spec)` 是非管道进程原语。提供方分配控制终端，并负责 UTF-8 文本传输、前台进程组检查与信号发送，以及一项须等待的 TERM→KILL 操作；该操作会使提供方仍可观察到的每个会话成员完全停稳，提供方则会记录执行基底特有的可观察性限制。PTY 后端仍负责提示符检测、就绪推断、scrollback、沙箱策略和持久会话所有权；普通 `spawn()` 无法重建控制终端语义。
+`ctx.subprocessPty.spawnTerminal(spec)` 是可选的非管道进程原语。独立 provider 分配控制终端，并负责 UTF-8 文本传输、前台进程组检查与信号发送，以及一项须等待的 TERM→KILL 操作；该操作会使其仍可观察到的每个 session member 完全停稳。PTY 后端仍负责 prompt 检测、readiness 推断、scrollback、sandbox policy 与 persistent-session ownership；普通 `spawn()` 无法重建控制终端语义。
 
-终端 spec 完全指定 argv、cwd、环境覆盖、尺寸、清理宽限期与可选的分配取消。其句柄公开 `pid`、有序输出、`done`、`write`、`inspectForeground`、`signalForeground` 和须等待的 `terminate`；确切的公共形状生成到 [`ctx.subprocess` 服务目录](#ctxsubprocess--subprocessruntime-abstract-seam)中。
+终端 spec 完全指定 argv、cwd、环境覆盖、尺寸、清理宽限期与可选分配取消。其 handle 公开 `pid`、有序输出、`done`、`write`、`inspectForeground`、`signalForeground` 和须等待的 `terminate`。本地与 E2B provider 分别位于 [`dsh-subprocess-pty-local`](../../packages/subprocess/subprocess-pty-local) 与 [`dsh-subprocess-pty-e2b`](../../packages/e2b/subprocess-pty-e2b)。
 
 ## 服务行为
 
-抽象的 [`SubprocessRuntime`](../../packages/subprocess/subprocess/src/index.ts) Service Definition 规定执行世界坐标、可执行文件查找、普通 `spawn` 与 `spawnTerminal`。[`LocalSubprocessRuntime`](../../packages/subprocess/subprocess-local/src/index.ts) 以 detached 进程树、按处置方式接线、凭据清除、`node-pty`、平台进程检查，以及先终止再等待退出的资源释放提供这些能力。Service Definition 约定见 [`dsh-subprocess`](../../packages/subprocess/subprocess/README.md)，本地机制见 [`dsh-subprocess-local`](../../packages/subprocess/subprocess-local/README.md)。
+抽象的 [`SubprocessRuntime`](../../packages/subprocess/subprocess/src/index.ts) 规定执行世界坐标、可执行文件查找与普通 `spawn`；[`LocalSubprocessRuntime`](../../packages/subprocess/subprocess-local/src/index.ts) 以 detached 进程树、共享收集、凭据清除和先终止再等待退出的资源释放实现它。[`SubprocessPtyRuntime`](../../packages/subprocess/subprocess-pty/src/index.ts) 独立规定终端分配与 session ownership。这一拆分允许普通进程部署完全省略 `node-pty`。
 
 <!-- BEGIN GENERATED cordis-surface (gen-cordis-catalog.ts) — do not edit between markers -->
 
@@ -282,11 +282,10 @@ Abstract subprocess service. Subclass, implement spawn, and load the subclass as
 Implementations must honor these semantics:
 
 - Executable paths belong to one execution world shared with the mounted filesystem provider.
-- spawn returns immediately with a live handle; `done` resolves at process close with exit facts and rejects only for spawn-level failures.
+- spawn resolves only after process creation has produced a real process id and the provider owns the process tree. It rejects when either condition cannot be established. `done` resolves at process close with exit facts and rejects only for failures after creation succeeds.
 - Collect-mode readers are offset-based and non-consuming, so independent readers never consume one another's output; lossy reads report truncation and the spill file holding the complete stream when one exists. Piped streams are handed to the caller raw and never buffered here.
 - SubprocessHandle.terminate (and the spec's abort signal) escalates SIGTERM→grace→SIGKILL — the only termination verb — tree-scoped on every platform. SubprocessHandle.waitForExit observes whole-tree liveness, so a consumer-owned teardown ladder can hold each tier on real quiescence.
 - Disposal of the service terminates all still-running managed processes and awaits their exit.
-- spawnTerminal owns terminal allocation, text transport, foreground groups, signalling, and whole-session quiescence behind one awaited termination method; readiness and persistent-shell policy stay in the PTY consumer. Its output stream ends after queued terminal output when the top-level process exits.
 
 ```ts cordis-catalog
 /**
@@ -306,19 +305,27 @@ abstract resolveExecutable( command: string, env?: Readonly<Record<string, strin
  * Start one managed child process from a fully-specified spec; this seam
  * applies no defaults.
  * @param spec - argv, directory, stdio dispositions, grace, cancellation, and environment.
- * @returns the live process handle (streams/readers, signalling, outcome promise).
+ * @returns the live process handle after its real process id and provider ownership are established.
  */
-abstract spawn(spec: SubprocessSpawnSpec): SubprocessHandle
+abstract spawn(spec: SubprocessSpawnSpec): Promise<SubprocessHandle>
+```
 
+Source: [`packages/subprocess/subprocess/src/index.ts:94`](../../packages/subprocess/subprocess/src/index.ts)
+
+<a id="ctxsubprocesspty--subprocessptyruntime-abstract-seam"></a>
+
+### `ctx.subprocessPty` — `SubprocessPtyRuntime` (abstract seam)
+
+Optional PTY process service. Providers publish a handle only after terminal allocation has a positive process id and the complete session is owned. Service disposal terminates and joins every still-live handle.
+
+```ts cordis-catalog
 /**
- * Allocate a real terminal and start one owned process session. This is the
- * only non-pipe process primitive: implementations own terminal byte I/O,
- * foreground groups, signals, and complete session-tree cleanup.
+ * Allocate a real terminal and start one owned process session.
  * @param spec - fully specified argv, cwd, environment, dimensions, grace, and allocation cancellation.
- * @returns the live terminal handle after allocation succeeds.
+ * @returns the live terminal handle after allocation and ownership succeed.
  */
 abstract spawnTerminal(spec: SubprocessTerminalSpawnSpec): Promise<SubprocessTerminalHandle>
 ```
 
-Source: [`packages/subprocess/subprocess/src/index.ts:102`](../../packages/subprocess/subprocess/src/index.ts)
+Source: [`packages/subprocess/subprocess-pty/src/index.ts:31`](../../packages/subprocess/subprocess-pty/src/index.ts)
 <!-- END GENERATED cordis-surface -->

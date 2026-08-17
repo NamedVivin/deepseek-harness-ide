@@ -6,7 +6,7 @@ The background job registry contract (`ctx.jobs`). The abstract `JobRegistry` an
 
 ## Service contract
 
-- `start(spec): JobId` validates the attached controller, spec, exact live owner, optional positive `outputLimitBytes`, and any provider-owned admission policy before calling the producer's `run()` once. A preflight rejection or starter throw leaves no job id or registered work; successful return commits without another failable step.
+- `start(spec): Promise<JobId>` validates the attached controller, spec, exact live owner, optional positive `outputLimitBytes`, and any provider-owned admission policy before calling the producer's asynchronous `run(signal)` once. The registry reserves admission while awaiting ready `JobHooks`; owner or service teardown aborts the setup signal and joins unpublished work. A preflight or starter rejection leaves no job id or registered work. If teardown wins after hooks become ready, the registry cancels and joins those resources before rejecting instead of publishing a placeholder record.
 - `get(id, caller?)` and `list(caller?)` return non-consuming snapshots. Listing includes only caller-owned and unowned jobs.
 - `read(id, caller?)` consumes the single cursor for stream jobs and reads terminal output idempotently for final-output jobs.
 - `kill(id, caller?, reason?)` invokes producer cancellation before changing status. A cancellation throw leaves the job running; success changes it to `stopping` and marks terminal delivery reported.
@@ -21,7 +21,7 @@ Owned access compares the job's `SessionId` with the caller's. Ids such as `bash
 
 `outputLimitBytes` is producer-owned model-presentation policy carried unchanged into snapshots. A controller applies it after adding status or notice metadata; the registry does not rewrite producer output or invent a default for producers that omit it.
 
-Implementations also owe the lifecycle semantics of the contract: registrations outlive producer and controller fibers, owner and service disposal cancel live work and await compliant producers, and settlement is first-wins — one terminal record, one round of contained listener notification, released waiters.
+Implementations also owe the lifecycle semantics of the contract: registrations outlive producer and controller fibers, pending starts reserve capacity without appearing in reads, owner and service disposal cancel and join both unpublished setup and live work, and settlement is first-wins — one terminal record, one round of contained listener notification, released waiters.
 
 See the [job type catalog](../../../docs/subsystems/jobs.md), the [runtime Agent Note](../../../.agents/notes/implemented/architecture/2026-06-20-generic-long-running-tool-runtime.md), and the [seam Agent Note](../../../.agents/notes/implemented/architecture/2026-07-26-job-registry-seam.md).
 
@@ -37,4 +37,4 @@ No direct invalidation; the named consumer owns any request-prefix changes.
 
 - **Stream output has one consuming cursor** — independent observers need a cursor or snapshot API.
 - **Foreground work cannot be promoted** — producers choose foreground or background before starting.
-- **The contract is in-process** — `JobStart.run()` passes callbacks and exact `Agent` objects; a durable or cross-process backend must reshape identity, restart, ownership, and observation semantics before it can implement this seam.
+- **The contract is in-process** — `JobStart.run(signal)` passes callbacks, a setup signal, and exact `Agent` objects; a durable or cross-process backend must reshape identity, restart, ownership, and observation semantics before it can implement this seam.

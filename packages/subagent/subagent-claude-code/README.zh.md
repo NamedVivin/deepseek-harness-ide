@@ -6,7 +6,7 @@
 
 ## 启动与所有权
 
-`start(request)` 只接受非空的文本块序列，并根据父会话确定子级 cwd。它会创建一个私有 `AbortController`，调用官方 SDK 的 `query()`，并仅在 SDK 的 `spawnClaudeCodeProcess` 钩子已经提供由 [`dsh-subprocess`](../../subprocess/subprocess/README.md) 管理的活动 CLI 句柄后发布此次运行。若在发布前发生失败或取消，它会关闭 query、终止所有已取得的进程树并等待其退出，然后拒绝 `start()` 调用。
+`start(request)` 只接受非空的文本块序列，并根据父会话确定子级 cwd。锁定版本的 SDK 只公开同步 `spawnClaudeCodeProcess` 钩子，而 [`dsh-subprocess`](../../subprocess/subprocess/README.md) 异步发布句柄。因此，提供方先让 `query()` 通过一项在 Query 发布前中止的捕获钩子组合一次 spawn 请求，等待恰好一次真实 subprocess spawn，再用已就绪的受管进程调用第二次 `query()`。第二个钩子必须恰好调用一次，而且其命令、参数、cwd 与环境必须和捕获请求一致；缺少捕获、意外发布 Query、参数变化或重复调用真实钩子都会显式失败。只有在真实 Query 接管具有正 PID 且由提供方拥有的 CLI 句柄后，此次运行才会发布。若在发布前发生失败或取消，它会关闭任何已有 Query、终止所有已取得的进程树并等待其退出，然后拒绝 `start()` 调用。
 
 SDK 接收由文本块原样拼接成的任务。提供方会完整迭代 SDK 消息流，而且只接受满足以下条件的 `result` 消息：其 `subtype: "success"`、`is_error: false` 且 `result` 非空白，之后迭代器还须正常结束。所有 SDK 错误子类型、标记为错误的成功消息、缺失答案、迭代器失败、协议失败或进程失败都映射为 `error`；该提供方不会产生 `max-tokens` 或 `refusal`。
 

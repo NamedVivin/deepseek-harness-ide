@@ -73,7 +73,7 @@ export interface AcpRunSpec {
    * child rides the shared scrub, tree-scoped teardown, and service-owned
    * lifetime instead of a package-local child_process path.
    */
-  spawn: (spec: SubprocessSpawnSpec) => SubprocessHandle
+  spawn: (spec: SubprocessSpawnSpec) => Promise<SubprocessHandle>
   /**
    * Sink for a child-level failure that the run flattened into a stop reason
    * (the seam contract forbids `result` rejecting). The driver calls this with
@@ -112,12 +112,6 @@ async function treeExitsWithin(child: SubprocessHandle, ms: number): Promise<boo
  * @param eofGraceMs - tier-1 window after stdin EOF.
  */
 export async function disposeAcpChild(child: SubprocessHandle, eofGraceMs: number): Promise<void> {
-  // A spawn failure has no process to tear down; observe the rejection so
-  // disposal in a finally block cannot surface it as unhandled.
-  if (child.pid <= 0) {
-    await child.done.catch(() => {})
-    return
-  }
   child.stdin?.end()
   if (await treeExitsWithin(child, eofGraceMs)) return
   // terminate() owns the bounded SIGTERM→SIGKILL timer. Its unbounded wait is
@@ -206,7 +200,7 @@ export async function startAcpRun(request: SubagentStartRequest, spec: AcpRunSpe
   // Keep diagnostics on parent stderr ('inherit'); only ACP output contributes
   // to the result. The seam's scrub drops ambient credentials and DSH_* names
   // while spec.env (the child's own key, its deployment facts) merges after it.
-  const child = spec.spawn({
+  const child = await spec.spawn({
     argv: [spec.command, ...spec.args],
     cwd: spec.cwd,
     stdio: { stdin: 'pipe', stdout: 'pipe', stderr: 'inherit' },
@@ -218,16 +212,16 @@ export async function startAcpRun(request: SubagentStartRequest, spec: AcpRunSpe
     throw new Error('subagent-acp: subprocess implementation dropped a piped protocol stream')
   }
   /* v8 ignore stop */
-  // Spawn-level failure surfaces as `done` rejecting into the startup race; a
+  // A post-creation observation failure rejects into the startup race; a
   // clean exit must never win it, so the success arm parks forever. (The ACP
   // connection observing its streams closing bounds a child that exits
   // without speaking the protocol.)
-  const spawnFailed: Promise<never> = child.done.then(
+  const childFailed: Promise<never> = child.done.then(
     /* v8 ignore next -- the success arm's never-settling executor is intentionally empty. */
     () => new Promise<never>(() => {}),
     (err: unknown) => Promise.reject(toError(err)),
   )
-  spawnFailed.catch(() => { /* observed by the startup race; never unhandled */ })
+  childFailed.catch(() => { /* observed by the startup race; never unhandled */ })
 
   // Startup rollback and the published handle share one process teardown.
   let processDisposal: Promise<void> | undefined
@@ -306,7 +300,7 @@ export async function startAcpRun(request: SubagentStartRequest, spec: AcpRunSpe
         sessionId = returnedSessionId
         if (flags.cancelled) throw new Error('subagent cancelled before the ACP session started')
       })(),
-      spawnFailed,
+      childFailed,
       cancelSettled.then((): never => { throw new Error('subagent cancelled before the ACP session started') }),
     ])
   } catch (error: unknown) {

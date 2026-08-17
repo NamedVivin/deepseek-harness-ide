@@ -72,14 +72,16 @@ export abstract class JobRegistry extends Service {
 
   /**
    * Preflight access, validation, owner cleanup, and implementation-owned
-   * admission before starting and atomically registering work. Any preflight
-   * rejection leaves no job id or execution resource. A throwing starter
-   * leaves nothing registered; after it returns, registration cannot fail.
-   * Settlement records the outcome, notifies listeners, and releases waiters.
-   * @param spec - job identity, owner, and synchronous starter.
-   * @returns the registry-issued `<kind>-N` id.
+   * admission before starting and atomically registering work. Capacity is
+   * reserved across the awaited starter. Owner or service teardown aborts and
+   * joins an unpublished start; a starter rejection leaves no record. After
+   * the starter resolves, registration either commits or cancels and joins the
+   * ready resource before rejecting. Settlement records the outcome, notifies
+   * listeners, and releases waiters.
+   * @param spec - job identity, owner, and asynchronous starter.
+   * @returns the registry-issued `<kind>-N` id after registration commits.
    */
-  abstract start(spec: JobStart): JobId
+  abstract start(spec: JobStart): Promise<JobId>
 
   /**
    * List caller-owned and unowned jobs in registration order without exposing

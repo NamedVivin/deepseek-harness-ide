@@ -23,6 +23,7 @@ import type {
 import {
   applyLiteralEdit,
   listDirectory,
+  listDirectoryBounded,
   normalizeLineEndings,
   probe,
   probeNoFollow,
@@ -154,6 +155,23 @@ export class LocalFileSystem extends FileSystem {
 
   override async listDir(target: FsTarget, signal?: AbortSignal): Promise<FsDirEntry[]> {
     const entries = await listDirectory({ displayPath: target.displayPath, targetKey: target.targetKey }, signal)
+    return this.projectDirEntries(entries)
+  }
+
+  override async listDirBounded(
+    target: FsTarget,
+    options: { maxEntries: number },
+    signal?: AbortSignal,
+  ): Promise<FsDirEntry[]> {
+    const entries = await listDirectoryBounded(
+      { displayPath: target.displayPath, targetKey: target.targetKey },
+      options,
+      signal,
+    )
+    return this.projectDirEntries(entries)
+  }
+
+  private projectDirEntries(entries: Awaited<ReturnType<typeof listDirectory>>): FsDirEntry[] {
     return entries.map(entry => ({
       name: entry.name,
       type: entry.type,

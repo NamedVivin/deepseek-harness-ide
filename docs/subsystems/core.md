@@ -389,6 +389,18 @@ Discovery is unmemoized: `list()` and `resolve()` re-read the roots on every cal
 
 ```ts cordis-catalog
 /**
+ * Contribute synchronous policy to every preset-bearing service operation.
+ *
+ * With no contribution every operation is admitted. Registration and
+ * disposal each start a new policy generation: existing agents keep their
+ * mounted generation, while new mounts and inherited compositions must
+ * obtain authority from the current contribution set.
+ * @param contribution - operation-aware admission policy.
+ * @returns the exact Cordis effect disposer for this contribution.
+ */
+registerAdmission(contribution: PresetAdmissionContribution): () => void
+
+/**
  * Every preset the configured roots currently supply.
  * @returns the presets, first-root-wins per id.
  */
@@ -402,7 +414,7 @@ async list(): Promise<AgentPreset[]>
  * through {@link resolveMountable}.
  * @param id - the preset id, or `undefined` for {@link defaultId}.
  * @returns the resolved preset.
- * @throws when no configured root supplies that id.
+ * @throws when admission refuses the operation or no configured root supplies that id.
  */
 async resolve(id?: string): Promise<AgentPreset>
 
@@ -417,7 +429,7 @@ async resolve(id?: string): Promise<AgentPreset>
  * @param agentCtx - the agent's scope context.
  * @param id - the preset id, or `undefined` for {@link defaultId}.
  * @returns the preset that was composed, for the caller to record.
- * @throws when the preset is unknown or its composition is unusable.
+ * @throws when admission refuses, the preset is unknown, or its composition is unusable.
  */
 async mount(agentCtx: Context, id?: string): Promise<AgentPreset>
 
@@ -433,11 +445,11 @@ async mount(agentCtx: Context, id?: string): Promise<AgentPreset>
  * parent's history was produced under (and a preset deleted since would fail
  * the child outright while its parent keeps running).
  *
- * Synchronous, and with no composition failure mode of its own — it reads no
- * roster, mounts nothing, and touches no file — which is what lets a child
- * creation window use it: the two in-process subagent drivers compose their
- * children inside a synchronous `setup`. It still rejects a caller error, as
- * the `@throws` below record.
+ * Synchronous because it reads no roster, mounts nothing, and touches no
+ * file, which lets a child creation window use it: the two in-process
+ * subagent drivers compose their children inside a synchronous `setup`.
+ * Admission remains synchronous too, and the inherited generation must
+ * carry authority from this roster's current policy.
  *
  * A parent that joined no preset — a rosterless deployment — yields no join
  * and no error: there, the model-facing rows sit in the host composition and
@@ -445,7 +457,8 @@ async mount(agentCtx: Context, id?: string): Promise<AgentPreset>
  * @param agentCtx - the joining agent's scope context.
  * @param parentCtx - the scope context of the agent whose composition to join.
  * @returns the preset id joined, or undefined when the parent joined none.
- * @throws when `agentCtx` carries no scope, or has already joined a preset.
+ * @throws when admission refuses, the parent's generation is obsolete or
+ * foreign, `agentCtx` carries no scope, or the agent already joined a preset.
  */
 composeFrom(agentCtx: Context, parentCtx: Context): string | undefined
 
@@ -528,7 +541,7 @@ serviceFor<K extends string & keyof Context>(agent: { ctx: Context }, name: K): 
  * @param agentCtx - the agent's scope context.
  * @param id - the preset to compose the agent from instead.
  * @returns the preset now installed.
- * @throws when the preset is unknown or its composition is unusable.
+ * @throws when admission refuses, the preset is unknown, or its composition is unusable.
  */
 async recompose(agentCtx: Context, id: string): Promise<AgentPreset>
 
@@ -541,14 +554,14 @@ async recompose(agentCtx: Context, id: string): Promise<AgentPreset>
  * agent, no session, and no turn.
  * @param id - the preset id, or `undefined` for {@link defaultId}.
  * @returns the standing scope key readers pass as a registry view scope.
- * @throws when the preset is unknown or its composition is unusable.
+ * @throws when admission refuses, the preset is unknown, or its composition is unusable.
  */
 async standingKeyFor(id?: string): Promise<ScopeKey>
 ```
 
 Types: [ScopeKey](scope.md)
 
-Source: [`packages/preset/agent-presets/src/index.ts:82`](../../packages/preset/agent-presets/src/index.ts)
+Source: [`packages/preset/agent-presets/src/index.ts:99`](../../packages/preset/agent-presets/src/index.ts)
 
 <a id="ctxagents--agentregistry"></a>
 

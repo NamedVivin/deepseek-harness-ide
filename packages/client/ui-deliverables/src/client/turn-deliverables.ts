@@ -9,15 +9,16 @@ import type {
 import { isAppendSurfaceEvent } from '@deepseek-ai/dsh-client-runtime/client'
 import type { MarkdownFileMentions } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TurnTailOwnerProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
+import type { FileLocation } from '@deepseek-ai/dsh-tools'
 
-interface ProducedPath {
+interface ProducedLocation {
   readonly seq: number
-  readonly path: string
+  readonly location: FileLocation
 }
 
 /** Immutable produced-file facts published against one Turn. */
 export interface DeliverablesTurnData {
-  readonly produced: readonly ProducedPath[]
+  readonly produced: readonly ProducedLocation[]
 }
 
 declare module '@deepseek-ai/dsh-client-runtime/client' {
@@ -33,18 +34,18 @@ interface DeliverablesState extends DeliverablesTurnData {
 }
 
 /**
- * Paths a call view reports having created or changed, by render intent rather
+ * Locations a call view reports having created or changed, by render intent rather
  * than tool name: a diff card, or a generic card whose kind is `edit` (the
  * shape `str_replace_editor`'s insert presents). Every other card produces
  * nothing to open — a read looked, a delete removed, a terminal ran. Only
  * root call views enter this Turn accumulator; nested Code Mode dispatches
  * preserve the pre-assembly behavior and do not contribute independently.
  */
-function producedPaths(view: ToolResultNode['callView']): readonly string[] {
+function producedLocations(view: ToolResultNode['callView']): readonly FileLocation[] {
   if (view === null) return []
-  if (view.card === 'diff') return (view.locations ?? []).map(location => location.path)
+  if (view.card === 'diff') return view.locations ?? []
   if (view.card === 'generic' && view.kind === 'edit') {
-    return (view.locations ?? []).map(location => location.path)
+    return view.locations ?? []
   }
   return []
 }
@@ -67,31 +68,31 @@ function producedPaths(view: ToolResultNode['callView']): readonly string[] {
  * boundaries from neighboring presentation Nodes.
  * @param data - engine-published Deliverables data for one Turn.
  * @param seq - closing Assistant seq; later Tool settlements are excluded.
- * @returns Produced paths in first-seen order; empty when the turn wrote nothing.
+ * @returns Produced locations in first-seen path order; empty when the turn wrote nothing.
  */
 export function producedForClosing(
   data: Readonly<DeliverablesTurnData> | undefined,
   seq = Number.POSITIVE_INFINITY,
-): readonly string[] {
+): readonly FileLocation[] {
   if (data === undefined) return []
-  const paths: string[] = []
+  const locations: FileLocation[] = []
   const seen = new Set<string>()
   for (const produced of data.produced) {
-    if (produced.seq > seq || seen.has(produced.path)) continue
-    seen.add(produced.path)
-    paths.push(produced.path)
+    if (produced.seq > seq || seen.has(produced.location.path)) continue
+    seen.add(produced.location.path)
+    locations.push(produced.location)
   }
-  return paths
+  return locations
 }
 
 /**
  * Claim the turn-tail chain only when its closing turn produced files.
  * @param owner - Turn-tail owner currency for the closing assistant.
- * @returns Produced paths as the component's match, or null to decline before mount.
+ * @returns Produced locations as the component's match, or null to decline before mount.
  */
-export function selectProducedFiles(owner: TurnTailOwnerProps): readonly string[] | null {
-  const paths = producedForClosing(owner.turn.data.get('deliverables'), owner.seq)
-  return paths.length === 0 ? null : paths
+export function selectProducedFiles(owner: TurnTailOwnerProps): readonly FileLocation[] | null {
+  const locations = producedForClosing(owner.turn.data.get('deliverables'), owner.seq)
+  return locations.length === 0 ? null : locations
 }
 
 /** Turn-local successful mutation accumulator; it publishes no view Node. */
@@ -122,8 +123,8 @@ export const deliverablesDefinition: ConversationNodeDefinition<DeliverablesStat
     const result = match.event.data.message.content[0]
     if (result.isError === true) return context.state
     const callId = String(match.event.data.message.source.callId)
-    const additions = producedPaths(context.state.calls.get(callId) ?? null)
-      .map(path => ({ seq: match.event.seq, path }))
+    const additions = producedLocations(context.state.calls.get(callId) ?? null)
+      .map(location => ({ seq: match.event.seq, location }))
     return additions.length === 0
       ? context.state
       : { ...context.state, produced: [...context.state.produced, ...additions] }
@@ -154,22 +155,29 @@ export function basename(path: string): string {
  * resolves by exact path, or by being exactly the basename of exactly one
  * produced path — a basename two paths share stays inert rather than
  * guessing, so a mention link can never open the wrong file or 404.
- * @param paths - The turn's produced paths (tool order, already deduped).
+ * @param locations - The turn's produced locations (tool order, already deduped by path).
  * @param openFile - The chat view's file opener.
  * @param label - Localizes the accessible open-label for a resolved path.
  * @returns The resolver MarkdownText consumes; the full path rides `title`,
  * the same disambiguator the row's chips carry.
  */
 export function producedFileMentions(
-  paths: readonly string[],
-  openFile: (path: string) => void,
+  locations: readonly FileLocation[],
+  openFile: (location: FileLocation) => Promise<void>,
   label: (path: string) => string,
 ): MarkdownFileMentions {
+  const paths = locations.map(location => location.path)
   return {
     resolve(value) {
       const path = paths.includes(value) ? value : onlyPathWithBasename(paths, value)
       if (path === undefined) return undefined
-      return { open: () => { openFile(path) }, label: label(path), title: path }
+      const location = locations.find(candidate => candidate.path === path)
+      if (location === undefined) return undefined
+      return {
+        open: () => { void openFile(location).catch(() => {}) },
+        label: label(path),
+        title: path,
+      }
     },
   }
 }

@@ -7,9 +7,13 @@ The browser side of the dsh web GUI: shell boot, browser-host communication, sha
 | Package | Purpose |
 |---|---|
 | [`web/`](web/README.md) | Boots the browser shell from the client entry graph. |
-| [`modules/`](modules/README.md) | Loads browser-side client modules. |
+| [`modules/`](modules/README.md) | Discovers and loads carrier-neutral renderer modules. |
+| [`modules-web/`](modules-web/README.md) | Delivers Client bundles through Web routes and index injection. |
+| [`modules-desktop/`](modules-desktop/README.md) | Maps signed Client bundles to immutable `dsh-app://` URLs. |
 | [`web-react/`](web-react/README.md) | Connects the shell runtime to React rendering. |
-| [`connection/`](connection/README.md) | Maintains browser-host RPC communication and event delivery. |
+| [`connection/`](connection/README.md) | Owns the carrier-neutral RPC registry, Client handle, and event-loop consumer. |
+| [`connection-web/`](connection-web/README.md) | Carries Connection over trusted HTTP routes and WebSocket downlinks. |
+| [`connection-desktop/`](connection-desktop/README.md) | Carries Connection over typed, bounded desktop child IPC. |
 | [`runtime/`](runtime/README.md) | Provides shared client services for sessions, workspaces, and UI composition. |
 | [`hmr/`](hmr/README.md) | Refreshes client plugins during development. |
 | [`locale/`](locale/README.md) | Provides localization preferences and message dictionaries. |
@@ -22,6 +26,8 @@ The browser side of the dsh web GUI: shell boot, browser-host communication, sha
 | [`ui-layout/`](ui-layout/README.md) | Arranges the main application regions. |
 | [`ui-sidebar/`](ui-sidebar/README.md) | Presents workspace and session navigation. |
 | [`ui-workspace/`](ui-workspace/README.md) | Provides workspace selection and creation surfaces. |
+| [`ui-directory-picker-desktop/`](ui-directory-picker-desktop/README.md) | Registers native desktop picks inside the Host. |
+| [`ui-ide/`](ui-ide/README.md) | Provides workspace file browsing, editing, Markdown preview, and CAS recovery. |
 | [`ui-conversation/`](ui-conversation/README.md) | Presents the active conversation and its input surface. |
 | [`ui-tool/`](ui-tool/README.md) | Composes Tool call trees and keyed per-Tool views. |
 | [`ui-workflow-run/`](ui-workflow-run/README.md) | Replays durable workflow runs as nested Chat disclosures with live-only child navigation. |

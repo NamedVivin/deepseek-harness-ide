@@ -9,22 +9,19 @@
 
 import { type ChildProcess, spawn, spawnSync } from 'node:child_process'
 import type { Readable } from 'node:stream'
-import { randomBytes } from 'node:crypto'
-import { closeSync, mkdtempSync, openSync, unlinkSync, writeSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import { setTimeout as sleepMs } from 'node:timers/promises'
 import { scrubbedParentEnv } from '@deepseek-ai/dsh-subprocess'
+import { collectReadable } from '@deepseek-ai/dsh-subprocess-collector'
+import type { CollectedReadable } from '@deepseek-ai/dsh-subprocess-collector'
 import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
 import type {
-  CollectedOutput,
   SubprocessCollect,
   SubprocessHandle,
   SubprocessOutcome,
   SubprocessOutputMode,
   SubprocessSpawnSpec,
 } from '@deepseek-ai/dsh-subprocess'
-import { linuxProcessGroupHasLiveMembers } from './process-inspector.ts'
+import { linuxProcessGroupHasLiveMembers } from './linux-process-group.ts'
 
 /**
  * Build a child environment: explicit caller entries override the scrubbed
@@ -64,6 +61,8 @@ export interface SpawnInternals {
  * intentionally absent from the public subprocess seam.
  */
 export interface LocalSubprocessHandle extends SubprocessHandle {
+  /** Resolves after Node confirms process creation and the handle has a positive pid. */
+  readonly ready: Promise<void>
   /** Force-terminate the current tree synchronously without starting timers or waits. */
   terminateForHostExit(): void
 }
@@ -76,178 +75,6 @@ export interface LocalSubprocessHandle extends SubprocessHandle {
  */
 function sleepTick(): Promise<void> {
   return sleepMs(15)
-}
-
-let spillCounter = 0
-let defaultSpillDir: string | undefined
-
-/**
- * The default spill location: a private (0700) per-process directory under
- * the OS tmpdir, created lazily. Predictable world-readable paths would let
- * other local users read command output or pre-create symlinks.
- */
-function privateSpillDir(): string {
-  defaultSpillDir ??= mkdtempSync(join(tmpdir(), 'dsh-subprocess-'))
-  return defaultSpillDir
-}
-
-/**
- * Collects one stream with a bounded in-memory tail. With a spill cap, on
- * first overflow a spill file is created and every chunk (including those
- * already collected) is appended there while the full stream remains within
- * the cap; without one, only the in-memory tail is ever retained (the
- * diagnostic-tail shape — a language server's stderr).
- *
- * Tail-keep rationale (pi/OpenCode): errors and final results cluster at the
- * end of command output; the spill file covers the head.
- */
-export class OutputCollector {
-  private chunks: Buffer[] = []
-  private bytes = 0
-  private dropped = false
-  private spillFd: number | undefined
-  private spillFile: string | undefined
-  private spillDisabled: boolean
-  /** Total bytes ever pushed (not just retained). */
-  private total = 0
-
-  constructor(
-    private readonly maxBytes: number,
-    private readonly maxSpillBytes: number | undefined,
-    private readonly label: string,
-    private readonly spillDir: string,
-  ) {
-    this.spillDisabled = maxSpillBytes === undefined
-  }
-
-  /**
-   * Ingest one stream chunk, counting it toward the whole-stream total. On
-   * first overflow of the in-memory cap a spill file is opened (when spilling
-   * is enabled) and every chunk (already-collected ones included) is appended
-   * there from then on; the in-memory tail then drops whole chunks from its
-   * head (or the head of a single over-cap chunk) until it fits the cap again.
-   * @param chunk - the raw bytes from one stream 'data' event.
-   */
-  push(chunk: Buffer): void {
-    this.total += chunk.length
-    const overflows = this.bytes + chunk.length > this.maxBytes
-    if (!this.spillDisabled && (overflows || this.spillFd !== undefined)) this.spillAll(chunk)
-    this.chunks.push(chunk)
-    this.bytes += chunk.length
-    while (this.bytes > this.maxBytes) {
-      const head = this.chunks[0] as Buffer
-      const excess = this.bytes - this.maxBytes
-      if (head.length <= excess) {
-        // Drop the whole head chunk (length ≥ 1 is guaranteed while over cap).
-        this.chunks.shift()
-        this.bytes -= head.length
-      } else {
-        // Trim the head so the retained window is byte-exact at the cap — a
-        // diagnostic tail (an LSP server's stderr) must hold the LAST
-        // maxBytes regardless of how the stream was chunked.
-        this.chunks[0] = head.subarray(excess)
-        this.bytes -= excess
-      }
-      this.dropped = true
-    }
-  }
-
-  /** Open the spill file lazily and append `chunk` (and any prior chunks once). */
-  private spillAll(chunk: Buffer): void {
-    if (this.maxSpillBytes !== undefined && this.total > this.maxSpillBytes) {
-      this.discardSpill()
-      return
-    }
-    if (this.spillFd === undefined) {
-      // Random suffix + O_EXCL + no-follow-equivalent ('wx' fails on any
-      // existing path, symlink or not) + owner-only mode: defeats spill-path
-      // prediction and symlink planting in shared tmp dirs.
-      this.spillFile = join(
-        this.spillDir,
-        `dsh-subprocess-${process.pid}-${++spillCounter}-${randomBytes(6).toString('hex')}-${this.label}.log`,
-      )
-      this.spillFd = openSync(this.spillFile, 'wx', 0o600)
-      for (const prior of this.chunks) writeSync(this.spillFd, prior)
-    }
-    writeSync(this.spillFd, chunk)
-  }
-
-  /** Stop spilling and remove the file once it can no longer hold the complete stream. */
-  private discardSpill(): void {
-    const fd = this.spillFd
-    const file = this.spillFile
-    this.spillFd = undefined
-    this.spillFile = undefined
-    this.spillDisabled = true
-    if (fd !== undefined) {
-      try {
-        closeSync(fd)
-      } catch {
-        // Retain the descriptor so finalize can retry the failed close.
-        this.spillFd = fd
-      }
-    }
-    if (file !== undefined) {
-      try {
-        unlinkSync(file)
-      } catch {
-        // A failed unlink leaves at most maxSpillBytes behind, never an unbounded file.
-      }
-    }
-  }
-
-  /**
-   * Incremental read in whole-stream byte coordinates: returns everything
-   * pushed since `fromByte`. When `fromByte` has already slid out of the
-   * in-memory tail window, the read is `lossy` — it returns the whole
-   * retained tail and the gap is only recoverable from the spill file.
-   * @param fromByte - whole-stream offset to resume from (a prior read's `nextOffset`; 0 for the first read).
-   * @returns the delta text, the offset for the next read, the `lossy` flag, and the spill path when one was created.
-   */
-  readFrom(fromByte: number): { text: string; nextOffset: number; lossy: boolean; spillPath?: string } {
-    const windowStart = this.total - this.bytes
-    const buffer = Buffer.concat(this.chunks)
-    const lossy = fromByte < windowStart
-    const slice = lossy ? buffer : buffer.subarray(fromByte - windowStart)
-    return {
-      text: slice.toString('utf8'),
-      nextOffset: this.total,
-      lossy,
-      ...this.spillFile !== undefined ? { spillPath: this.spillFile } : {},
-    }
-  }
-
-  /**
-   * Close the spill file once the stream has ended. A failed close (delayed
-   * writeback fault) stops advertising the spill path — the file may be
-   * missing its tail — while every in-memory read keeps working. Idempotent;
-   * the spawn path seals both collectors at settlement so reads after exit
-   * never point at a still-open file.
-   */
-  seal(): void {
-    if (this.spillFd === undefined) return
-    try {
-      closeSync(this.spillFd)
-    } catch {
-      // A delayed writeback failure makes the spill unreliable; keep the
-      // in-memory result but stop advertising that file.
-      this.spillFile = undefined
-    }
-    this.spillFd = undefined
-  }
-
-  /**
-   * Seal the spill file and return the final output.
-   * @returns the final collected output: tail text, truncation flag, and the spill path when intact.
-   */
-  finalize(): CollectedOutput {
-    this.seal()
-    return {
-      text: Buffer.concat(this.chunks).toString('utf8'),
-      truncated: this.dropped,
-      ...this.spillFile !== undefined ? { spillPath: this.spillFile } : {},
-    }
-  }
 }
 
 /**
@@ -315,19 +142,19 @@ function signalTree(
 }
 
 /**
- * Spawn one isolated detached process tree with the spec's per-stream stdio
- * dispositions. Runtime exits resolve `done` as {@link SubprocessOutcome};
- * only spawn failures reject.
+ * Begin one isolated detached process tree with the spec's per-stream stdio
+ * dispositions. {@link LocalSubprocessHandle.ready} confirms creation;
+ * runtime exits resolve `done` as {@link SubprocessOutcome}, while creation
+ * or later process-observation failures reject it.
  * @param spec - fully resolved argv, cwd, stdio, grace, cancellation, environment.
  * @param internals - test-only spill-directory, platform, and taskkill overrides.
- * @returns live subprocess handle.
+ * @returns an unpublished handle whose `ready` promise confirms its positive pid.
  * @throws when `graceMs` cannot be represented by one Node timer.
  */
 export function spawnSubprocess(spec: SubprocessSpawnSpec, internals: SpawnInternals = {}): LocalSubprocessHandle {
   if (!Number.isFinite(spec.graceMs) || spec.graceMs <= 0 || spec.graceMs > MAX_TIMER_DELAY_MS) {
     throw new Error(`subprocess graceMs must be a positive finite number no greater than ${MAX_TIMER_DELAY_MS}`)
   }
-  const spillDir = internals.spillDir ?? privateSpillDir()
   const platform = internals.platform ?? process.platform
   const taskkill = internals.taskkill ?? taskkillProcessTree
   const linuxGroupHasLiveMembers = internals.linuxProcessGroupHasLiveMembers ?? linuxProcessGroupHasLiveMembers
@@ -360,11 +187,18 @@ export function spawnSubprocess(spec: SubprocessSpawnSpec, internals: SpawnInter
     detached: platform !== 'win32',
   })
 
-  const collectStream = (mode: SubprocessOutputMode, stream: Readable | null, label: string): OutputCollector | undefined => {
+  const collectStream = (
+    mode: SubprocessOutputMode,
+    stream: Readable | null,
+    label: string,
+  ): CollectedReadable | undefined => {
     if (!isCollect(mode) || stream === null) return undefined
-    const collector = new OutputCollector(mode.maxBytes, mode.spill?.maxBytes, label, spillDir)
-    stream.on('data', (chunk: Buffer) => { collector.push(chunk) })
-    return collector
+    return collectReadable(stream, {
+      maxBytes: mode.maxBytes,
+      ...mode.spill !== undefined ? { maxSpillBytes: mode.spill.maxBytes } : {},
+      label,
+      ...internals.spillDir !== undefined ? { spillDir: internals.spillDir } : {},
+    })
   }
   const stdoutCollector = collectStream(outMode, child.stdout, 'stdout')
   const stderrCollector = collectStream(errMode, child.stderr, 'stderr')
@@ -374,8 +208,13 @@ export function spawnSubprocess(spec: SubprocessSpawnSpec, internals: SpawnInter
   let treeExitObservation: Promise<void> | undefined
   let settled = false
 
-  // Failed spawns use pid -1 so signalling remains a no-op.
+  // The numeric sentinel stays private to pre-publication signalling and liveness checks.
   const pid = child.pid ?? -1
+  const ready = new Promise<void>((resolveReady, rejectReady) => {
+    child.once('spawn', resolveReady)
+    child.once('error', rejectReady)
+  })
+  void ready.catch(() => {})
 
   /** Whether the detached tree's root (or POSIX group) is still alive. */
   const treeAlive = (): boolean => {
@@ -474,16 +313,14 @@ export function spawnSubprocess(spec: SubprocessSpawnSpec, internals: SpawnInter
       settled = true
       // Only harness-collected pipes are force-closed at the drain boundary;
       // a 'pipe'-mode stream belongs to the caller and closes with the child.
-      if (stdoutCollector !== undefined) child.stdout?.destroy()
-      if (stderrCollector !== undefined) child.stderr?.destroy()
-      stdoutCollector?.seal()
-      stderrCollector?.seal()
       cleanup()
       resolve({ exitCode, signal })
     }
     child.on('error', (error) => {
       // No meaningful close outcome follows a spawn failure.
       settled = true
+      stdoutCollector?.fail(error)
+      stderrCollector?.fail(error)
       cleanup()
       reject(error)
     })
@@ -492,6 +329,9 @@ export function spawnSubprocess(spec: SubprocessSpawnSpec, internals: SpawnInter
       // outcome open indefinitely: after exit, the same bounded grace that
       // governs kills also bounds the close wait.
       pipeDrainTimer = setTimeout(() => {
+        const failure = new Error('subprocess-local: collected output did not drain before the process grace expired')
+        stdoutCollector?.fail(failure)
+        stderrCollector?.fail(failure)
         settle(exitCode, signal)
       }, spec.graceMs)
     })
@@ -525,16 +365,20 @@ export function spawnSubprocess(spec: SubprocessSpawnSpec, internals: SpawnInter
   }
 
   return {
-    pid,
+    get pid(): number {
+      if (pid <= 0) throw new Error('subprocess-local: process id requested before successful creation')
+      return pid
+    },
     /* v8 ignore start -- pipe-mode fds exist on every spawn Node returns; the null-coalesces guard a nonconforming ChildProcess only. */
     stdin: stdinMode === 'pipe' ? child.stdin ?? undefined : undefined,
     stdout: outMode === 'pipe' ? child.stdout ?? undefined : undefined,
     stderr: errMode === 'pipe' ? child.stderr ?? undefined : undefined,
     /* v8 ignore stop */
     collected: {
-      ...stdoutCollector !== undefined ? { stdout: stdoutCollector } : {},
-      ...stderrCollector !== undefined ? { stderr: stderrCollector } : {},
+      ...stdoutCollector !== undefined ? { stdout: stdoutCollector.reader } : {},
+      ...stderrCollector !== undefined ? { stderr: stderrCollector.reader } : {},
     },
+    ready,
     done,
     terminate,
     terminateForHostExit,

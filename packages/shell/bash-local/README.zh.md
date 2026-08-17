@@ -27,7 +27,7 @@
 - **在受管进程组之上应用配置预算**：`resolve()` 从配置补全 `workdir`／`timeoutMs`／`stdoutMaxBytes`，每次 spawn 都向服务传入显式的字节上限、spill 上限与 `graceMs`。该宽限期须为正有限值，且不得大于 [`MAX_TIMER_DELAY_MS`](../../util/timeout/README.md)，这样 Node 就能用一个定时器表示它。进程组终止、退出后管道排空、尾部保留与有界 spill 文件是 [`dsh-subprocess-local`](../../subprocess/subprocess-local/README.md) 的机制。前台 `ShellExecRequest.stdoutMaxBytes` 可为某个受信任调用方提高单次 stdout 捕获预算；stderr 和后台运行仍使用 `maxOutputBytes`。
 - **超时与取消分类**：`run()` 通过同一个 deadline 把经配置钳位的超时与调用方的信号融合；只有执行器自身的超时报告 `timedOut`，上游取消报告 `aborted`，自身因信号终止的命令两者皆不报告（见[超时库 Agent Note](../../../.agents/notes/implemented/architecture/2026-07-06-timeout-deadline-library.md)）。
 - **适合模型的终端环境**：`NO_COLOR=1 TERM=dumb PAGER=cat GIT_PAGER=cat` 防止分页器与 ANSI 颜色破坏结果。这些值作为普通 env 合并，遵循服务的凭据清除与 `DSH_*` 通道规则；调用方的显式条目依旧优先。详见 [stdin/env Agent Note](../../../.agents/notes/implemented/architecture/2026-06-30-bash-stdin-env-trusted-plugin-api.md) 与 [受管环境 Agent Note](../../../.agents/notes/implemented/feature/2026-07-10-agent-session-identity-and-log-location.md)。
-- **后台进程**：`start()` 会立即返回活动的 `ShellProcess` 句柄且不应用超时；`readOutput()` 把基于偏移量的 stdout/stderr 读取合并为一条消费式增量，并在存在 stderr 时将其置于 `[stderr]` 标记下。运行中的进程属于 subprocess 服务，可在执行器重载后存活，并在服务 dispose 时被终止且等待退出。job id、所有权、轮询和通知属于通用 [`ctx.jobs` 运行时](../../jobs/jobs/README.md)，工具层会在其中注册该句柄。
+- **后台进程**：只有在 `ctx.subprocess.spawn()` 发布正进程 ID 与提供方所有权后，`start()` 才 resolve 为活动的 `ShellProcess`；创建失败会直接 reject，不返回进程句柄。创建后不应用超时。`readOutput()` 把基于偏移量的 stdout/stderr 读取合并为一条消费式增量，并在存在 stderr 时将其置于 `[stderr]` 标记下。运行中的进程属于 subprocess 服务，可在执行器重载后存活，并在服务 dispose 时被终止且等待退出。job id、所有权、轮询和通知属于通用 [`ctx.jobs` 运行时](../../jobs/jobs/README.md)，工具层会在其中注册该句柄。
 
 ## 模型体验
 
@@ -42,6 +42,6 @@
 - **自身不提供隔离**：此执行器始终以 harness 进程的权限运行命令；需要隔离的部署可以组合 [`dsh-bash-sandbox`](../bash-sandbox/README.md)，每次调用的 allow/deny/ask 策略则属于 `tools/pre-execute`。
 - **没有持久 shell 或 PTY**：每次调用都启动新的非登录 `bash -c`；仅持久化 cwd 与交互式终端会话均继续暂缓，直到真实工作流需要它们。
 - **仅支持 POSIX**：`bash` 二进制已硬编码，底层服务的进程组语义也是 POSIX 的；不支持 Windows。
-- **后台 spawn 失败提示只交付一次**：subprocess 服务不会为从未真正运行的进程缓冲任何输出，因此执行器把 `spawn failed: …` 注入恰好一个 `readOutput()` 增量；丢弃了该增量的读取方无法再恢复它。
+- **创建后进程观察失败提示只交付一次**：`start()` resolve 后，如果 subprocess 的 `done` reject，`ShellProcess` 会以 `killed` 结算；如果没有保留的 stderr，执行器会把 `process failed: …` 注入恰好一个 `readOutput()` 增量。丢弃了该增量的读取方无法再恢复它。
 
 凭据清除启发式规则与 spill 保留的注意事项随 [`dsh-subprocess-local`](../../subprocess/subprocess-local/README.md) 记录；这些机制归它所有。

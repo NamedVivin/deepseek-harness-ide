@@ -21,6 +21,9 @@
   isolate:
     terminals: true
   config:
+    - id: subprocess-pty
+      name: '@deepseek-ai/dsh-subprocess-pty-local'
+
     - id: pty
       name: '@deepseek-ai/dsh-terminal'
 

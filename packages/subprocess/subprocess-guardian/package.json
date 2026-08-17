@@ -1,0 +1,82 @@
+{
+  "name": "@deepseek-ai/dsh-subprocess-guardian",
+  "description": "Bounded child-IPC subprocess provider and guardian lifecycle runtime for the packaged desktop Host",
+  "version": "0.1.0-rc.5",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "directory": "packages/subprocess/subprocess-guardian"
+  },
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./guardian": {
+      "types": "./lib/types/guardian.d.ts",
+      "default": "./lib/guardian.js"
+    },
+    "./host": {
+      "types": "./lib/types/host.d.ts",
+      "default": "./lib/host.js"
+    },
+    "./macos-capsule": {
+      "types": "./lib/types/macos-capsule.d.ts",
+      "default": "./lib/macos-capsule.js"
+    },
+    "./protocol": {
+      "types": "./lib/types/protocol.d.ts",
+      "default": "./lib/protocol.js"
+    },
+    "./supervisor": {
+      "types": "./lib/types/supervisor.d.ts",
+      "default": "./lib/supervisor.js"
+    },
+    "./windows-koffi": {
+      "types": "./lib/types/windows-koffi.d.ts",
+      "default": "./lib/windows-koffi.js"
+    },
+    "./invariant": {
+      "types": "./lib/types/invariant.d.ts",
+      "default": "./lib/invariant.js"
+    },
+    "./src/*": "./src/*",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/index.js",
+    "lib/invariant.js",
+    "lib/guardian.js",
+    "lib/host.js",
+    "lib/macos-capsule.js",
+    "lib/protocol.js",
+    "lib/supervisor.js",
+    "lib/windows-koffi.js",
+    "lib/channel-*.js",
+    "lib/types/**/*.d.ts"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@deepseek-ai/dsh-brand": "workspace:^",
+    "@deepseek-ai/dsh-subprocess-collector": "workspace:^",
+    "@deepseek-ai/dsh-timeout": "workspace:^",
+    "koffi": "3.1.1",
+    "@deepseek-ai/schemastery": "workspace:^"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "workspace:^",
+    "@deepseek-ai/dsh-invariants": "workspace:^",
+    "@deepseek-ai/dsh-subprocess": "workspace:^"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "workspace:^",
+    "@deepseek-ai/dsh-invariants": "workspace:^",
+    "@deepseek-ai/dsh-subprocess": "workspace:^"
+  }
+}

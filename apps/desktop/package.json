@@ -1,0 +1,73 @@
+{
+  "name": "@deepseek-ai/dsh-desktop",
+  "description": "Installable zero-port Electron IDE with a pure Node.js Host sidecar",
+  "version": "0.1.0-rc.5",
+  "author": "DeepSeek",
+  "productName": "DeepSeek Harness IDE",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "directory": "apps/desktop"
+  },
+  "type": "module",
+  "main": "lib/main.js",
+  "config": {
+    "forge": "./forge.config.ts"
+  },
+  "files": [
+    "lib",
+    "config",
+    "native",
+    "generated/desktop-resource-manifest.json",
+    "forge.config.ts"
+  ],
+  "scripts": {
+    "build": "pnpm run build:host && pnpm run build:renderer",
+    "build:host": "tsc -b tsconfig.host.json && tsdown",
+    "build:renderer": "vite build",
+    "assemble": "tsx scripts/assemble.ts",
+    "verify:artifacts": "tsx scripts/verify-artifacts.ts",
+    "package": "pnpm run build && pnpm run assemble && tsx scripts/forge.ts package",
+    "make": "pnpm run build && pnpm run assemble && tsx scripts/forge.ts make",
+    "start": "pnpm run build && pnpm run assemble && tsx scripts/forge.ts start"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@deepseek-ai/cordis": "workspace:^",
+    "@deepseek-ai/cordis-plugin-include": "workspace:^",
+    "@deepseek-ai/dsh-agent-presets-desktop": "workspace:^",
+    "@deepseek-ai/dsh-app-boot": "workspace:^",
+    "@deepseek-ai/dsh-base": "workspace:^",
+    "@deepseek-ai/dsh-client-connection-desktop": "workspace:^",
+    "@deepseek-ai/dsh-client-modules": "workspace:^",
+    "@deepseek-ai/dsh-client-web": "workspace:^",
+    "@deepseek-ai/dsh-desktop-app": "workspace:^",
+    "@deepseek-ai/dsh-ide-app": "workspace:^",
+    "@deepseek-ai/dsh-launch-environment": "workspace:^",
+    "@deepseek-ai/dsh-subprocess-guardian": "workspace:^",
+    "@deepseek-ai/dsh-web-app": "workspace:^",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "devDependencies": {
+    "@electron-forge/core": "7.11.2",
+    "@electron-forge/maker-dmg": "7.11.2",
+    "@electron-forge/maker-squirrel": "7.11.2",
+    "@electron-forge/maker-zip": "7.11.2",
+    "@electron-forge/plugin-fuses": "7.11.2",
+    "@electron-forge/shared-types": "7.11.2",
+    "@electron-internal/extract-zip": "1.0.5",
+    "@electron/fuses": "2.1.3",
+    "@types/node": "^22.0.0",
+    "electron": "43.2.0",
+    "png2icons": "2.0.1",
+    "sharp": "0.35.3",
+    "tsx": "^4.22.4",
+    "typescript": "^6.0.3",
+    "vite": "^6.0.0",
+    "vitest": "^4.1.8"
+  }
+}

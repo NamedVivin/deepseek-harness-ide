@@ -11,6 +11,7 @@ import type {
   TurnLocation, WorkspaceId,
 } from '@deepseek-ai/dsh-client-runtime/client'
 import type { MarkdownFileMentions } from '@deepseek-ai/dsh-client-ui-primitives'
+import type { FileLocation } from '@deepseek-ai/dsh-tools'
 import type { MessageId } from '@deepseek-ai/dsh-client-connection/client'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type { ComposerBlock } from '../input/blocks.ts'
@@ -324,10 +325,10 @@ export interface TurnTailOwnerProps {
   /** The closing assistant's seq — the anchor the tail renders under. */
   seq: number
   /**
-   * Open a filesystem path through the Host (tool-row semantics; the chat
-   * view resolves relative paths against the session cwd).
+   * Offer a complete file location to internal handlers, then use the carrier
+   * fallback when none claims it.
    */
-  openFile: (path: string) => void
+  openFile: (location: FileLocation) => Promise<void>
 }
 
 /**
@@ -358,7 +359,8 @@ export interface ChatNodeOwnerProps {
   selectedCallId?: CallId | undefined
   /** Session workspace root; Tool summaries display paths relative to it. */
   cwd?: string | undefined
-  openFile: (path: string) => void
+  /** Offer a presenter-owned location to the internal opener and carrier fallback. */
+  openFile: (location: FileLocation) => Promise<void>
   inspectCall: (callId: CallId) => void
   forkAt: (seq: number) => void
   /** Resolve a session-authorized historical image for inline display. */
@@ -675,11 +677,8 @@ export interface ChatScrollPosition {
 export interface ChatViewInjected {
   /** Selection write + details panel opening in one gesture (store action + layout orchestration). */
   openDetails: (target: SelectionTarget) => void
-  /**
-   * Open a tool-arg filesystem path with the host OS default application
-   * (relative paths resolve against the session cwd).
-   */
-  openFile: (path: string) => void
+  /** Offer a presenter-owned location to the internal opener and carrier fallback. */
+  openFile: (location: FileLocation) => Promise<void>
   loadOlder: () => void
   /** Resolve a session-authorized historical image for inline display. */
   loadImage: (attachment: ImageAttachmentRef) => Promise<string>

@@ -23,13 +23,14 @@ interface JobKindMap {
 
 ## 生产方约定
 
-`JobStart` 声明身份和启动器。运行时会在调用 `run()` 前完成预检，随后提交注册，不再执行可能失败的步骤。生产方拥有执行资源；运行时拥有身份、访问权限和生命周期状态。
+`JobStart` 声明身份和异步启动器。运行时会在等待 `run()` 前预留容量并安装所有者清理；只有已 resolve 的钩子才会发布。生产方拥有执行资源；运行时拥有身份、访问权限和生命周期状态。
 
 ```ts type-equiv
 /**
  * Producer declaration passed to {@link JobRegistry.start}. The runtime
- * preflights access and cleanup before invoking {@link run}; the producer owns
- * execution resources while the runtime owns identity and lifecycle state.
+ * reserves capacity and installs owner cleanup before awaiting {@link run};
+ * the producer owns execution resources while the runtime owns identity and
+ * lifecycle state.
  */
 interface JobStart {
   /** Producer kind — also the id prefix (`bash`, `subagent`, …). */
@@ -49,11 +50,14 @@ interface JobStart {
    */
   owner?: Agent
   /**
-   * Start the work after preflight and synchronously return its hooks. Called
-   * once; a throw leaves nothing registered, and the producer must clean up any
-   * partially started resources.
+   * Start the work after preflight and return its hooks only after its resources
+   * are ready. Called once. A rejection leaves nothing registered, and the
+   * producer must clean up any partially started resources. The signal aborts
+   * when owner or service teardown reaches an unpublished start.
+   * @param signal - cancellation of setup before registration commits.
+   * @returns control hooks for ready work.
    */
-  run(): JobHooks
+  run(signal: AbortSignal): Promise<JobHooks>
 }
 ```
 
@@ -180,14 +184,16 @@ Implementations must honor these semantics:
 ```ts cordis-catalog
 /**
  * Preflight access, validation, owner cleanup, and implementation-owned
- * admission before starting and atomically registering work. Any preflight
- * rejection leaves no job id or execution resource. A throwing starter
- * leaves nothing registered; after it returns, registration cannot fail.
- * Settlement records the outcome, notifies listeners, and releases waiters.
- * @param spec - job identity, owner, and synchronous starter.
- * @returns the registry-issued `<kind>-N` id.
+ * admission before starting and atomically registering work. Capacity is
+ * reserved across the awaited starter. Owner or service teardown aborts and
+ * joins an unpublished start; a starter rejection leaves no record. After
+ * the starter resolves, registration either commits or cancels and joins the
+ * ready resource before rejecting. Settlement records the outcome, notifies
+ * listeners, and releases waiters.
+ * @param spec - job identity, owner, and asynchronous starter.
+ * @returns the registry-issued `<kind>-N` id after registration commits.
  */
-abstract start(spec: JobStart): JobId
+abstract start(spec: JobStart): Promise<JobId>
 
 /**
  * List caller-owned and unowned jobs in registration order without exposing

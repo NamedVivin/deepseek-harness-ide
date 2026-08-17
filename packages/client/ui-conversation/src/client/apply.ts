@@ -11,6 +11,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 // Type-only: pulls the locale plugin's Context merge (ctx.locale).
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type { ViewTab } from './contract/views.ts'
+import { ClientFileOpener } from './file-opener.ts'
 import type {
   ApprovalWait, ChatNodeTurnDataInjected, ChatScrollPosition, ChatViewInjected, ComposerBarInjected,
   ComposerChainProps, ConversationInjected, ConversationSessionHeaderInjected, ConversationSessionInjected,
@@ -113,6 +114,7 @@ function selectApproval({ interactions }: ComposerChainProps): ApprovalWait | nu
  * @param ctx - Client root context.
  */
 export function apply(ctx: Context): void {
+  const fileOpener = new ClientFileOpener(ctx)
   const sessions = ctx.sessions
   const workspaces = ctx.workspaces
   const layout = ctx.layout
@@ -392,12 +394,11 @@ export function apply(ctx: Context): void {
           layout.openDetails()
         },
         fileMentions: owner => ctx.get('chatFileMentions')?.forClosing(owner),
-        openFile: (path) => {
+        openFile: async (location) => {
+          const internal = await fileOpener.tryOpen({ sessionId, location })
+          if (internal === 'handled') return
           const cwd = sessions.list.getSnapshot().byId[sessionId]?.cwd
-          void workspaces.openPath(resolveWorkspacePath(cwd, path)).catch(() => {
-            // Host/OS open failures stay silent in the chat row; the native
-            // app surfaces its own error dialog when the path is unusable.
-          })
+          await workspaces.openPath(resolveWorkspacePath(cwd, location.path))
         },
         loadOlder: () => { void scoped.loadOlder() },
         loadImage: attachment => conversation.resolveImage(sessionId, attachment),

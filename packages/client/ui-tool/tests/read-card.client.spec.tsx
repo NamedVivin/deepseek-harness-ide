@@ -61,7 +61,11 @@ const resultRead = (over?: Partial<Extract<ToolResultView, { card: 'read' }>>): 
 
 const running = (over?: Partial<RunningToolCall>): RunningToolCall => ({
   callId: 'c1', name: 'read', argsRaw: ARGS,
-  turn: 1, step: 1, time: 1_000, callView: { card: 'generic', title: 'Read src/a.ts', kind: 'read' }, subCalls: [], ...over,
+  turn: 1, step: 1, time: 1_000,
+  callView: {
+    card: 'generic', title: 'Read src/a.ts', kind: 'read', locations: [{ path: 'src/a.ts', line: 41 }],
+  },
+  subCalls: [], ...over,
 })
 
 const settled = (over?: Partial<ToolResultNode>): ToolResultNode => ({
@@ -69,7 +73,10 @@ const settled = (over?: Partial<ToolResultNode>): ToolResultNode => ({
   call: { name: 'read', argsRaw: ARGS },
   callTime: 1_000,
   content: [{ type: 'text', text: '41: export const a = 1' }], isError: false,
-  callView: { card: 'generic', title: 'Read src/a.ts', kind: 'read' }, resultView: resultRead(), subCalls: [], ...over,
+  callView: {
+    card: 'generic', title: 'Read src/a.ts', kind: 'read', locations: [{ path: 'src/a.ts', line: 41 }],
+  },
+  resultView: resultRead(), subCalls: [], ...over,
 })
 
 describe('readCardModel', () => {
@@ -129,7 +136,7 @@ describe('readCardModel', () => {
 
 describe('GenericToolCard read body', () => {
   const ownerProps = (block: RunningToolCall | ToolResultNode): GenericToolCardProps => ({
-    callId: 'c1', toolName: 'web_fetch', block, openFile: vi.fn(), t,
+    callId: 'c1', toolName: 'web_fetch', block, openFile: vi.fn(async () => {}), t,
   })
 
   /** The whole summary row is the expand toggle (ToolRow's unified interaction). */
@@ -178,7 +185,7 @@ describe('ReadRow keyed toolview', () => {
   })
 
   const rowProps = (block: RunningToolCall | ToolResultNode): Parameters<typeof ReadRow>[0] => ({
-    callId: 'c1', toolName: 'read', block, openFile: vi.fn(),
+    callId: 'c1', toolName: 'read', block, openFile: vi.fn(async () => {}),
     sessionId: SID, useSessions: bindSnapshotSelector(list()),
     t,
   } as unknown as Parameters<typeof ReadRow>[0])
@@ -208,12 +215,12 @@ describe('ReadRow keyed toolview', () => {
   })
 
   it('the path summary opens the file through the host', () => {
-    const openFile = vi.fn()
+    const openFile = vi.fn(async () => {})
     const view = render(<ReadRow {...{ ...rowProps(settled()), openFile }} />)
     fireEvent.click(view.getByRole('button', { name: 'src/a.ts' }))
     // The row derives the file path from args; the chat view resolves it against
     // the cwd before this callback opens it, so the arg path is what arrives.
-    expect(openFile).toHaveBeenCalledWith('src/a.ts')
+    expect(openFile).toHaveBeenCalledWith({ path: 'src/a.ts', line: 41 })
   })
 
   it('a running read renders the summary row alone, and its state', () => {

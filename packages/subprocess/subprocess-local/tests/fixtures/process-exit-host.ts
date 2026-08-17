@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
 import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
+import LocalSubprocessPtyRuntime from '@deepseek-ai/dsh-subprocess-pty-local'
 
 const [kind, trigger, root] = process.argv.slice(2)
 if ((kind !== 'ordinary' && kind !== 'terminal')
@@ -33,7 +34,7 @@ const ctx = new Context()
 const fiber = await ctx.plugin(LocalSubprocessRuntime)
 const listenersAfterLoad = process.listenerCount('exit')
 if (kind === 'ordinary') {
-  ctx.subprocess.spawn({
+  await ctx.subprocess.spawn({
     argv: [process.execPath, managedTree, treeState],
     cwd: process.cwd(),
     stdio: {
@@ -44,7 +45,8 @@ if (kind === 'ordinary') {
     graceMs: trigger === 'dispose' ? 100 : 30_000,
   })
 } else {
-  await ctx.subprocess.spawnTerminal({
+  await ctx.plugin(LocalSubprocessPtyRuntime)
+  await ctx.subprocessPty.spawnTerminal({
     argv: [process.execPath, managedTree, treeState],
     cwd: process.cwd(),
     rows: 24,

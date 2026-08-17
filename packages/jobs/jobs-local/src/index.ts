@@ -5,7 +5,7 @@
  *
  * Registrations outlive producer and controller fibers. Agent or service
  * disposal cancels live work and awaits compliant producers; a throwing
- * teardown cancel force-fails only the record and reports a possible orphan.
+ * teardown cancel force-fails only the record and reports that work may still be running.
  * @module @deepseek-ai/dsh-jobs-local
  */
 
@@ -17,7 +17,7 @@ import type { ScopeLayer } from '@deepseek-ai/dsh-scope'
 import { deadline, timeoutOf } from '@deepseek-ai/dsh-timeout'
 import { JobRegistry, JobId } from '@deepseek-ai/dsh-jobs'
 import type {
-  JobDoneListener, JobKind, JobOutcome, JobRead, JobSnapshot, JobStart, JobStatus,
+  JobDoneListener, JobHooks, JobKind, JobOutcome, JobRead, JobSnapshot, JobStart, JobStatus,
   JobsChangedListener,
 } from '@deepseek-ai/dsh-jobs'
 
@@ -62,9 +62,21 @@ interface TrackedTask {
   waitResolvers: Set<() => void>
 }
 
+/** One admitted starter that has not committed a job record. */
+interface PendingStart {
+  owner: Agent | undefined
+  controller: AbortController
+  settled: Promise<void>
+  markSettled: () => void
+}
+
 /** True for the three terminal {@link JobStatus} values. */
 function isTerminal(status: JobStatus): boolean {
   return status === 'completed' || status === 'killed' || status === 'failed'
+}
+
+function asError(value: unknown): Error {
+  return value instanceof Error ? value : new Error(String(value))
 }
 
 /**
@@ -101,6 +113,9 @@ export class LocalJobRegistry extends JobRegistry {
   private readonly maxConcurrentJobsPerOwner: number
   private store = new Map<JobId, TrackedTask>()
   private counters = new Map<string, number>()
+  /** Capacity reservations and teardown joins for asynchronous starters. */
+  private pendingStarts = new Set<PendingStart>()
+  private disposing = false
   /**
    * Surfaces and listeners layered by the scope that registered them, in the
    * tools-registry shape: a contribution files into its registering context's
@@ -128,7 +143,8 @@ export class LocalJobRegistry extends JobRegistry {
     ctx.effect(() => () => this.disposeAll(), 'jobs teardown')
   }
 
-  start(spec: JobStart): JobId {
+  async start(spec: JobStart): Promise<JobId> {
+    if (this.disposing) throw new Error('background job registry is disposing')
     if (!this.servesOwner(spec.owner)) {
       throw new Error('background jobs unavailable: no job controller serves this agent (load @deepseek-ai/dsh-tool-jobs in its composition)')
     }
@@ -140,14 +156,36 @@ export class LocalJobRegistry extends JobRegistry {
     }
     if (spec.owner !== undefined) this.ensureOwnerCleanup(spec.owner)
 
-    const active = this.activeTaskCount(spec.owner)
+    const active = this.activeTaskCount(spec.owner) + this.pendingStartCount(spec.owner)
     if (active >= this.maxConcurrentJobsPerOwner) {
       throw new Error(
         `background job limit reached for this owner (limit: ${this.maxConcurrentJobsPerOwner}); use job_kill to stop an unneeded job, wait for it to finish, then retry`,
       )
     }
 
-    const hooks = spec.run()
+    const setupDone = Promise.withResolvers<void>()
+    const pending: PendingStart = {
+      owner: spec.owner,
+      controller: new AbortController(),
+      settled: setupDone.promise,
+      markSettled: setupDone.resolve,
+    }
+    this.pendingStarts.add(pending)
+    let hooks: JobHooks
+    try {
+      hooks = await spec.run(pending.controller.signal)
+      if (
+        pending.controller.signal.aborted
+        || this.isDisposing()
+        || !this.servesOwner(spec.owner)
+      ) {
+        await this.rollbackPendingStart(hooks, pending.controller.signal.reason)
+        throw new Error('background job setup was cancelled before registration')
+      }
+    } finally {
+      this.pendingStarts.delete(pending)
+      pending.markSettled()
+    }
     const count = (this.counters.get(spec.kind) ?? 0) + 1
     this.counters.set(spec.kind, count)
     const id = JobId(`${spec.kind}-${count}`)
@@ -327,6 +365,41 @@ export class LocalJobRegistry extends JobRegistry {
     return count
   }
 
+  /** Count capacity reservations for one exact owner or the shared unowned bucket. */
+  private pendingStartCount(owner: Agent | undefined): number {
+    let count = 0
+    for (const pending of this.pendingStarts) {
+      if (pending.owner === owner) count += 1
+    }
+    return count
+  }
+
+  /** Read teardown state after asynchronous producer setup. */
+  private isDisposing(): boolean {
+    return this.disposing
+  }
+
+  /** Cancel and join ready work that cannot commit its job record. */
+  private async rollbackPendingStart(hooks: JobHooks, reason: unknown): Promise<void> {
+    let cancelFailure: unknown
+    try {
+      hooks.cancel(typeof reason === 'string' ? reason : 'job setup cancelled')
+    } catch (error: unknown) {
+      cancelFailure = error
+    }
+    let doneFailure: unknown
+    try {
+      await hooks.done
+    } catch (error: unknown) {
+      doneFailure = error
+    }
+    const failures = [cancelFailure, doneFailure].filter(failure => failure !== undefined)
+    if (failures.length === 1) throw asError(failures[0])
+    if (failures.length > 1) {
+      throw new AggregateError(failures, 'background job setup rollback failed')
+    }
+  }
+
   /**
    * The completion listeners that own `owner`'s notices: the global layer's
    * first, then each scoped layer along the owner's chain. A listener outside
@@ -465,9 +538,14 @@ export class LocalJobRegistry extends JobRegistry {
 
   /** Cancel, await terminal records, and drop every job owned by one exact agent lifecycle. */
   private async disposeOwned(owner: Agent): Promise<void> {
+    const pending = [...this.pendingStarts].filter(start => start.owner === owner)
+    for (const start of pending) start.controller.abort('owner disposed')
     const owned = [...this.store.values()].filter(job => job.owner === owner)
     this.cancelForTeardown(owned, 'owner disposed')
-    await Promise.all(owned.map(job => job.settled))
+    await Promise.all([
+      ...pending.map(start => start.settled),
+      ...owned.map(job => job.settled),
+    ])
     for (const job of owned) this.store.delete(job.id)
     // Removal is the one visible-set change no per-job record carries, so it
     // must be announced here or an observer keeps the dropped rows forever.
@@ -482,9 +560,15 @@ export class LocalJobRegistry extends JobRegistry {
     // The flag is the whole guard: each layer entry's undo belongs to the fiber
     // that registered it, so this service may not drop them on its own way out.
     this.listenersClosed = true
+    this.disposing = true
+    const pending = [...this.pendingStarts]
+    for (const start of pending) start.controller.abort('jobs service disposed')
     const all = [...this.store.values()]
     this.cancelForTeardown(all, 'jobs service disposed')
-    await Promise.all(all.map(job => job.settled))
+    await Promise.all([
+      ...pending.map(start => start.settled),
+      ...all.map(job => job.settled),
+    ])
     // Distinct owners whose records just disappeared. A change observer files
     // into the layer of the context that registered it, so a consumer mounted
     // outside this service — the api-proxy carrier registers from the mux
@@ -501,7 +585,7 @@ export class LocalJobRegistry extends JobRegistry {
 
   /**
    * Cancel jobs during teardown with per-job containment. A throwing cancel
-   * force-fails the record and reports a possible orphan; a cancel that returns
+   * force-fails the record and reports that work may still be running; a cancel that returns
    * without settling remains indistinguishable from a slow stop and may stall.
    */
   private cancelForTeardown(jobs: TrackedTask[], reason: string): void {
@@ -523,8 +607,8 @@ export class LocalJobRegistry extends JobRegistry {
         // observer from showing `running` for that whole window.
         this.notifyChanged(job.owner)
       } catch (error: unknown) {
-        const detail = `cancel threw during teardown; work may be orphaned: ${String(error)}`
-        this.selfCtx.logger.warn(`jobs: cancel of ${job.id} threw during teardown; job record forced failed and work may be orphaned: ${String(error)}`)
+        const detail = `cancel threw during teardown; work may still be running: ${String(error)}`
+        this.selfCtx.logger.warn(`jobs: cancel of ${job.id} threw during teardown; job record forced failed and work may still be running: ${String(error)}`)
         this.settle(job, { status: 'failed', detail })
       }
     }

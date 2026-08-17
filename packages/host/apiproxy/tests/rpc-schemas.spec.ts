@@ -73,6 +73,16 @@ describe('rpcErrorSchema', () => {
       details: { provider: 'p', model: 'm' },
     }).code).toBe('model-unavailable')
     expect(rpcErrorSchema.parse({ code: 'agent-busy', message: 'm', details: { reason: 'r' } }).code).toBe('agent-busy')
+    expect(rpcErrorSchema.parse({
+      code: 'desktop-preset-unsupported',
+      message: 'm',
+      details: {
+        agentPreset: 'legacy',
+        operation: 'resolve',
+        reason: 'r',
+        supportedPreset: 'desktop-default',
+      },
+    }).code).toBe('desktop-preset-unsupported')
     expect(rpcErrorSchema.parse({ code: 'queue-item-not-found', message: 'm', details: { itemId: 'i' } }).code).toBe('queue-item-not-found')
     expect(rpcErrorSchema.parse({ code: 'command-error', message: 'm', details: {} }).code).toBe('command-error')
     expect(rpcErrorSchema.parse({ code: 'unknown-command', message: 'm', details: {} }).code).toBe('unknown-command')

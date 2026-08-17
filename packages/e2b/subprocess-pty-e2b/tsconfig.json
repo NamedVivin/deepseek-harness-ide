@@ -1,0 +1,14 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": { "rootDir": "src", "outDir": "lib/types" },
+  "include": ["src"],
+  "references": [
+    { "path": "../../../vendor/cordis" },
+    { "path": "../../../vendor/cosmokit" },
+    { "path": "../../subprocess/subprocess-pty" },
+    { "path": "../../runtime-diagnostics/invariants" },
+    { "path": "../../util/timeout" },
+    { "path": "../e2b" },
+    { "path": "../subprocess-e2b" }
+  ]
+}

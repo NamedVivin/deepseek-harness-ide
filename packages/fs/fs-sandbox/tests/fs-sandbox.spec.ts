@@ -85,6 +85,19 @@ describe('read-only', () => {
     await writeFile(path, 'hello')
     expect(await fs.readText(await target(path))).toBe('hello')
   })
+
+  it('inherits bounded listings without applying a mutation fence', async () => {
+    await writeFile(join(workspace, 'b.txt'), 'b')
+    await writeFile(join(workspace, 'a.txt'), 'a')
+    const root = await target(workspace)
+    await expect(fs.listDirBounded(root, { maxEntries: 2 }))
+      .resolves.toEqual(expect.arrayContaining([
+        expect.objectContaining({ name: 'a.txt' }),
+        expect.objectContaining({ name: 'b.txt' }),
+      ]))
+    await expect(fs.listDirBounded(root, { maxEntries: 1 }))
+      .rejects.toMatchObject({ code: 'FS_TOO_LARGE' })
+  })
 })
 
 describe('workspace-write containment', () => {

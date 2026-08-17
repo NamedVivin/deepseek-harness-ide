@@ -252,14 +252,14 @@ export function apply(ctx: Context, config: Config = {}): void {
         const jobs = ctx.get('jobs')
         if (jobs === undefined) throw new Error('background terminal sends require @deepseek-ai/dsh-jobs and @deepseek-ai/dsh-tool-jobs')
         let cancelRequested = false
-        const jobId = jobs.start({
+        const jobId = await jobs.start({
           kind: 'pty-send',
           label: `${id}: ${args.text || '(input)'}`,
           owner,
           outputLimitBytes: maxResultBytes,
           run: () => {
             const operation = ctx.terminals.startSend(owner, id, request)
-            return {
+            return Promise.resolve({
               cancel: () => {
                 cancelRequested = true
                 operation.cancel()
@@ -269,7 +269,7 @@ export function apply(ctx: Context, config: Config = {}): void {
                 (error: unknown) => ({ status: 'failed' as const, detail: String(error) }),
               ),
               readOutput: () => renderSendRead(operation.readOutput()),
-            }
+            })
           },
         })
         return { kind: 'background' as const, jobId }

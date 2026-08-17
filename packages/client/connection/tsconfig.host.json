@@ -6,25 +6,18 @@
     "tsBuildInfoFile": "lib/tsconfig.host.tsbuildinfo"
   },
   "files": [
-    "src/api-path.ts",
-    "src/api-request-trust.ts",
-    "src/http-bridge.ts",
     "src/index.ts",
     "src/invariant.ts",
-    "src/loopback-hostname.ts",
     "src/rpc-host.ts",
     "src/rpc.ts",
-    "src/websocket-downlink.ts"
+    "src/transport.ts"
   ],
   "references": [
     {
-      "path": "../../attachment/attachment"
+      "path": "../../../vendor/cordis"
     },
     {
       "path": "../../host/apiproxy"
-    },
-    {
-      "path": "../../host/webserver"
     },
     {
       "path": "../../runtime-diagnostics/invariants"

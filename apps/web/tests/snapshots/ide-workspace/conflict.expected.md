@@ -1,0 +1,31 @@
+- region "Editor":
+  - img
+  - strong: Editor
+  - text: Workspace
+  - combobox "Workspace":
+    - option "IDE snapshot" [selected]
+  - button "Close editor":
+    - img
+  - complementary:
+    - text: Files
+    - tree "Files":
+      - treeitem "README.md"
+      - treeitem "src"
+  - main:
+    - tablist:
+      - tab "README.md Unsaved changes" [selected]: README.md ●
+      - 'button "Close tab: README.md"':
+        - img
+    - text: README.md
+    - status: Unsaved changes
+    - button "Preview"
+    - button "Save"
+    - region "The file changed on disk":
+      - strong: The file changed on disk
+      - paragraph: Both the local buffer and latest disk content are retained. Choose how to continue.
+      - button "Continue editing"
+      - button "Reload from disk"
+      - button "Overwrite with local content"
+      - text: "Local content # Local draft This preview comes from the unsaved editor buffer. Disk content # Disk revision Another writer saved this version."
+    - tabpanel "README.md Unsaved changes":
+      - textbox "README.md"

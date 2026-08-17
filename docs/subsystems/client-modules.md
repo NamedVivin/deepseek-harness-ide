@@ -2,13 +2,13 @@
 
 English | [中文](client-modules.zh.md)
 
-The web plugin table: the Node half of the client module system in [dsh-client-modules](../../packages/client/modules), provided as `ctx.clientModules` (`ClientModuleRegistry`). It scans the host Loader's entries for packages declaring `dsh.client`, composes the `window.__DSH_BOOT__` entry graph, serves each bundle at `/plugins/<id>/client.js`, and taps the index render to inject the boot manifest — the four faces of one service. It is an optional capability of the web GUI stack, not part of the agent-loop spine, and it is a consumer of [dsh-host-webserver](../../packages/host/webserver): the carrier described in [web-server.md](web-server.md) supplies the prefix route and index tap this service registers. The same package's browser half (`ctx.modules`, the lazy-CJS module table that fetches and materializes these bundles) is kernel machinery documented in the [package README](../../packages/client/modules/README.md), not here.
+The carrier-neutral Client plugin table in [dsh-client-modules](../../packages/client/modules), provided as `ctx.clientModules` (`ClientModuleRegistry`). It scans Host Loader entries declaring `dsh.client`, hashes their browser bundles, and composes one revisioned dependency graph. Exactly one `ctx.clientModuleDelivery` provider supplies physical URLs and installs the graph on its carrier: [dsh-client-modules-web](../../packages/client/modules-web) owns HTTP routes and index injection, while [dsh-client-modules-desktop](../../packages/client/modules-desktop) owns immutable `dsh-app://` URLs resolved against the packaged manifest. This optional GUI capability is not part of the agent-loop spine. The browser half (`ctx.modules`) remains the only code loader and is documented in the [package README](../../packages/client/modules/README.md).
 
-Source: [`packages/client/modules/src/client/manifest.ts`](../../packages/client/modules/src/client/manifest.ts)
+Source: [`packages/client/modules/src/index.ts`](../../packages/client/modules/src/index.ts)
 
 ## The wire
 
-The graph is the wire single source between the Node and browser halves: the host composes `WebBootEntry` rows from scanned packages, injects the graph as the first script in `<head>` (`window.__DSH_BOOT__`, with `<` escaped so plugin-controlled strings cannot break out of the script element), and the shell parses it before booting anything. A page without a valid manifest cannot boot — the browser-side parser throws loud on a missing or malformed graph.
+The graph is the wire single source between the Host and renderer halves. The Host composes `WebBootEntry` rows from scanned packages and the selected delivery provider assigns each row's URL. Web injects the graph as the first script in `<head>` (`window.__DSH_BOOT__`, with `<` escaped); desktop obtains the same graph through the closed `desktop.bootManifest` IPC method before boot. A renderer without a valid manifest fails before loading any Client bundle.
 
 ```ts type-equiv
 /**
@@ -42,7 +42,7 @@ interface WebBootGraph {
 }
 ```
 
-Each row's `rev` is the bundle's content hash and rides the URL as a cache-busting query; the graph `rev` hashes the composed rows, so any row change changes it. `immediately` marks the stage-one prefetch tier (fetch and execute during module-face boot, registration only); a lazy row is fetched on first import.
+Each row's `rev` is the bundle's content hash and rides the carrier URL; the graph `rev` hashes the composed rows, so any row change changes it. `immediately` marks the stage-one prefetch tier (fetch and execute during module-face boot, registration only); a lazy row is fetched on first import.
 
 ## The scan
 
@@ -52,9 +52,9 @@ Scanning is incremental per package; there is no full-rescan code path. Every co
 
 Package metadata — including the negative "not a client package" verdict — is cached per name and never expires: plugin-set changes take effect on restart. A fiber restart reuses its row and rev untouched; bundle content changes reach the graph only through `rebuilt()`.
 
-## The bundle route and index tap
+## Delivery providers
 
-`GET`/`HEAD /plugins/<id>/client.js` serves the registered bundle from disk with `no-cache` (the rev query, not HTTP caching, anchors consistency); other methods are 405. An unknown id — or a registered row whose bundle is unreadable because it has not been built yet — answers a loud 404 rather than letting the carrier's SPA fallback ship HTML as JavaScript. The index tap injects the current graph on every index render, so a reload always boots against the live composition.
+The Web provider serves `GET`/`HEAD /plugins/<id>/client.js` with `no-cache`, rejects other methods, and injects the current graph on every index render. The desktop provider emits `dsh-app://plugins/<id>/client.js?rev=<rev>` and resolves only an exact current-graph URL; Electron then maps that URL through the separately hashed packaged resource manifest. Traversal, unknown ids, stale revisions, unreadable bundles, and delivery-provider duplication fail closed.
 
 ## The service
 
@@ -70,11 +70,43 @@ In development, [dsh-client-hmr](../../packages/client/hmr/README.md) is the reg
 
 Generated from source by `scripts/gen-cordis-catalog.ts` (verified fresh by `pnpm run verify-cordis-catalog` in doc-sync; regenerate with `pnpm run gen-cordis-catalog`) — this section is byte-identical in both language sides of the page. Signature blocks use a `ts cordis-catalog` fence and keep the original source JSDoc; dispatch modes are defined in the [primer](../cordis-primer.md#dispatch-modes), and the framework-inherited `ctx` API lives in [cordis-api/inherited.md](../cordis-api/inherited.md).
 
+<a id="ctxclientmoduledelivery--clientmoduledelivery-abstract-seam"></a>
+
+### `ctx.clientModuleDelivery` — `ClientModuleDelivery` (abstract seam)
+
+Service Definition implemented by Web and desktop module-delivery providers.
+
+```ts cordis-catalog
+/**
+ * Produce the immutable URL advertised for one bundle revision.
+ * @param id - Client package id.
+ * @param revision - content revision.
+ * @returns carrier URL placed in the shared boot manifest.
+ */
+abstract bundleUrl(id: string, revision: string): string
+
+/**
+ * Attach physical delivery to the composed registry.
+ * @param host - read-only graph and bundle-path source.
+ * @returns disposer for routes, protocol mapping, or retained state.
+ */
+abstract install(host: ClientModuleDeliveryHost): () => void
+
+/**
+ * Resolve an exact advertised URL to a bundle path.
+ * @param url - untrusted physical asset URL.
+ * @returns the matched bundle path, or undefined when it is not currently advertised.
+ */
+abstract resolveBundleUrl(url: string): string | undefined
+```
+
+Source: [`packages/client/modules/src/delivery.ts:24`](../../packages/client/modules/src/delivery.ts)
+
 <a id="ctxclientmodules--clientmoduleregistry"></a>
 
 ### `ctx.clientModules` — `ClientModuleRegistry`
 
-The web plugin table service: incremental `dsh.client` scan + wire composition + bundle route + index tap. Construction runs the activation scan synchronously — a malformed declaration or missing bundle among the already-loaded entries aggregates into one loud throw (FAILED fiber; the boot activation audit reports it).
+Incremental `dsh.client` scan and carrier-neutral wire composition. Construction runs the activation scan synchronously — a malformed declaration or missing bundle among the already-loaded entries aggregates into one loud throw (FAILED fiber; the boot activation audit reports it).
 
 ```ts cordis-catalog
 /**
@@ -114,5 +146,49 @@ onRebuilt(listener: (id: string, rev: string) => void): () => void
 onGraphChanged(listener: () => void): () => void
 ```
 
-Source: [`packages/client/modules/src/index.ts:184`](../../packages/client/modules/src/index.ts)
+Source: [`packages/client/modules/src/index.ts:170`](../../packages/client/modules/src/index.ts)
+
+<a id="ctxconnection--hostconnectionhandle"></a>
+
+### `ctx.connection` — `HostConnectionHandle`
+
+Host `ctx.connection` shape consumed by transport-independent adapters.
+
+Source: [`packages/client/connection/src/rpc.ts:56`](../../packages/client/connection/src/rpc.ts)
+
+<a id="ctxconnectiontransport--hostconnectiontransport-abstract-seam"></a>
+
+### `ctx.connectionTransport` — `HostConnectionTransport` (abstract seam)
+
+Service Definition implemented by the Web and desktop Connection providers.
+
+```ts cordis-catalog
+/**
+ * Attach physical routes or IPC handlers to the core router.
+ * @param host - carrier-neutral request and event owner.
+ * @returns disposer that reaches transport quiescence.
+ */
+abstract install(host: HostConnectionTransportHost): () => void | Promise<void>
+```
+
+Source: [`packages/client/connection/src/transport.ts:67`](../../packages/client/connection/src/transport.ts)
+
+<a id="ctxdesktophostbridge--desktophostbridge"></a>
+
+### `ctx.desktopHostBridge` — `DesktopHostBridge`
+
+Sidecar-to-Electron main capability service with a closed method map.
+
+```ts cordis-catalog
+/**
+ * Invoke one Electron-main capability.
+ * @param method - closed Host-initiated method name.
+ * @param payload - method-derived request payload.
+ * @param signal - optional caller cancellation propagated to main.
+ * @returns method-derived response after IPC validation.
+ */
+request<K extends keyof HostInitiatedMethodMap>( method: K, payload: HostInitiatedRequest<K>, signal?: AbortSignal, ): Promise<HostInitiatedResponse<K>>
+```
+
+Source: [`packages/client/connection-desktop/src/index.ts:161`](../../packages/client/connection-desktop/src/index.ts)
 <!-- END GENERATED cordis-surface -->

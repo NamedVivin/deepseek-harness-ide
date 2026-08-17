@@ -35,6 +35,15 @@ External packages that a workspace package resolves at runtime. The tier covers 
 | [`@anthropic-ai/claude-agent-sdk`](https://github.com/anthropics/claude-agent-sdk-typescript) | SEE LICENSE IN README.md |
 | [`@anthropic-ai/sdk`](https://github.com/anthropics/anthropic-sdk-typescript) | MIT |
 | [`@babel/code-frame`](https://github.com/babel/babel) | MIT |
+| [`@codemirror/commands`](https://code.haverbeke.berlin/codemirror/commands) | MIT |
+| [`@codemirror/lang-css`](https://github.com/codemirror/lang-css) | MIT |
+| [`@codemirror/lang-html`](https://code.haverbeke.berlin/codemirror/lang-html) | MIT |
+| [`@codemirror/lang-javascript`](https://github.com/codemirror/lang-javascript) | MIT |
+| [`@codemirror/lang-json`](https://github.com/codemirror/lang-json) | MIT |
+| [`@codemirror/lang-markdown`](https://code.haverbeke.berlin/codemirror/lang-markdown) | MIT |
+| [`@codemirror/lang-python`](https://github.com/codemirror/lang-python) | MIT |
+| [`@codemirror/state`](https://code.haverbeke.berlin/codemirror/state) | MIT |
+| [`@codemirror/view`](https://code.haverbeke.berlin/codemirror/view) | MIT |
 | [`@earendil-works/pi-ai`](https://github.com/earendil-works/pi) | MIT |
 | [`@joplin/turndown-plugin-gfm`](https://github.com/laurent22/joplin-turndown-plugin-gfm) | MIT |
 | [`@jridgewell/gen-mapping`](https://github.com/jridgewell/sourcemaps) | MIT |
@@ -53,9 +62,11 @@ External packages that a workspace package resolves at runtime. The tier covers 
 | [`anser`](https://github.com/IonicaBizau/anser) | MIT |
 | [`chokidar`](https://github.com/paulmillr/chokidar) | MIT |
 | [`clsx`](https://github.com/lukeed/clsx) | MIT |
+| [`codemirror`](https://github.com/codemirror/basic-setup) | MIT |
 | [`commander`](https://github.com/tj/commander.js) | MIT |
 | [`diff`](https://github.com/kpdecker/jsdiff) | BSD-3-Clause |
 | [`e2b`](https://github.com/e2b-dev/e2b) | MIT |
+| [`electron`](https://github.com/electron/electron) | MIT |
 | [`eventsource-parser`](https://github.com/rexxars/eventsource-parser) | MIT |
 | [`fflate`](https://github.com/101arrowz/fflate) | MIT |
 | [`immer`](https://github.com/immerjs/immer) | MIT |
@@ -112,6 +123,16 @@ The installed SDK 0.3.220 declares the following optional platform packages. Eac
 | [`@anthropic-ai/claude-agent-sdk-win32-arm64`](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk-win32-arm64) | 0.3.220 | SEE LICENSE IN LICENSE.md |
 | [`@anthropic-ai/claude-agent-sdk-win32-x64`](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk-win32-x64) | 0.3.220 | SEE LICENSE IN LICENSE.md |
 
+## Packaged desktop executable payloads
+
+The native desktop application carries this notice and the project `LICENSE` under `desktop-resources/`. Assembly also preserves the license files shipped with each executable payload at fixed paths verified before a candidate is uploaded:
+
+- Electron 43.2.0 and its bundled Chromium runtime. Electron's `LICENSE` and Chromium's complete `LICENSES.chromium.html` are copied from the installed Electron distribution to `desktop-resources/legal/electron/`.
+- Node.js v24.16.0. The unmodified official distribution's `LICENSE` is copied beside the bundled executable under `desktop-resources/runtime/`.
+- `@vscode/ripgrep` 1.18.0 and its target-specific `rg` executable. The wrapper and platform package `LICENSE` files remain in the deployed Host closure.
+- `koffi` 3.1.1 and its target-specific native Node module. The package's `LICENSE.txt` remains in the deployed Host closure.
+- `dsh-process-capsule`, a first-party macOS helper built from this repository and covered by the project MIT `LICENSE`. Windows packages reject this helper.
+
 
 ## Development-only npm dependencies
 
@@ -120,6 +141,13 @@ External packages **directly declared** only by repository tooling, test infrast
 | Package | License |
 | --- | --- |
 | [`@braintree/sanitize-url`](https://github.com/braintree/sanitize-url) | MIT |
+| [`@electron-forge/cli`](https://github.com/electron/forge) | MIT |
+| [`@electron-forge/maker-dmg`](https://github.com/electron/forge) | MIT |
+| [`@electron-forge/maker-squirrel`](https://github.com/electron/forge) | MIT |
+| [`@electron-forge/maker-zip`](https://github.com/electron/forge) | MIT |
+| [`@electron-forge/plugin-fuses`](https://github.com/electron/forge) | MIT |
+| [`@electron-forge/shared-types`](https://github.com/electron/forge) | MIT |
+| [`@electron/fuses`](https://github.com/electron/fuses) | MIT |
 | [`@modelcontextprotocol/server-everything`](https://github.com/modelcontextprotocol/servers) | MIT / Apache-2.0 |
 | [`@modelcontextprotocol/server-filesystem`](https://github.com/modelcontextprotocol/servers) | MIT / Apache-2.0 |
 | [`@openai/codex`](https://github.com/openai/codex) | Apache-2.0 |
@@ -157,6 +185,7 @@ External packages **directly declared** only by repository tooling, test infrast
 | [`oxlint`](https://github.com/oxc-project/oxc) | MIT |
 | [`oxlint-tsgolint`](https://github.com/oxc-project/tsgolint) | MIT |
 | [`playwright`](https://github.com/microsoft/playwright) | Apache-2.0 |
+| [`png2icons`](https://github.com/idesis-gmbh/png2icons) | MIT |
 | [`publint`](https://github.com/publint/publint) | MIT |
 | [`smol-toml`](https://github.com/squirrelchat/smol-toml) | BSD-3-Clause |
 | [`spdx-expression-parse`](https://github.com/jslicense/spdx-expression-parse.js) | MIT |

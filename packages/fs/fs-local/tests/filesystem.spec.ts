@@ -329,20 +329,31 @@ describe('listDir', () => {
     expect(typeof entries.find(entry => entry.name === 'alpha.md')?.version).toBe('string')
     expect(entries.find(entry => entry.name === 'broken-link')?.version).toBeUndefined()
     expect(entries.find(entry => entry.name === 'dir-skill')?.size).toBeUndefined()
+
+    const bounded = await fs.listDirBounded(await fs.resolve('skills'), { maxEntries: 4 })
+    expect(bounded).toEqual(entries)
+    await expect(fs.listDirBounded(await fs.resolve('skills'), { maxEntries: 3 }))
+      .rejects.toMatchObject({ code: 'FS_TOO_LARGE' })
   })
 
   it('reports a missing directory as FS_NOT_FOUND', async () => {
     await expect(fs.listDir(await fs.resolve('missing'))).rejects.toMatchObject({ code: 'FS_NOT_FOUND' })
+    await expect(fs.listDirBounded(await fs.resolve('missing'), { maxEntries: 1 }))
+      .rejects.toMatchObject({ code: 'FS_NOT_FOUND' })
   })
 
   it('reports a file target as FS_NOT_DIRECTORY', async () => {
     await writeFile(join(dir, 'a.txt'), 'text')
     await expect(fs.listDir(await fs.resolve('a.txt'))).rejects.toMatchObject({ code: 'FS_NOT_DIRECTORY' })
+    await expect(fs.listDirBounded(await fs.resolve('a.txt'), { maxEntries: 1 }))
+      .rejects.toMatchObject({ code: 'FS_NOT_DIRECTORY' })
   })
 
   it('honors a pre-aborted signal', async () => {
     await mkdir(join(dir, 'skills'), { recursive: true })
     await expect(fs.listDir(await fs.resolve('skills'), AbortSignal.abort())).rejects.toMatchObject({ code: 'FS_ABORTED' })
+    await expect(fs.listDirBounded(await fs.resolve('skills'), { maxEntries: 1 }, AbortSignal.abort()))
+      .rejects.toMatchObject({ code: 'FS_ABORTED' })
   })
 })
 

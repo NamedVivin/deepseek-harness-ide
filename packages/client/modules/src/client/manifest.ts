@@ -26,8 +26,9 @@
  *
  * This file is the browser-safe contract face (zero node imports): the
  * `__DSH_BOOT__` wire types, the boot-manifest parser, and the boundaries around
- * {@link ClientModuleSystem}. The package root is the host-side service that
- * composes the wire.
+ * {@link ClientModuleSystem}. The package publishes this file as the pure ESM
+ * `./manifest` subpath for Node carriers; `./client` remains the lazy-CJS plugin
+ * artifact. The package root is the host-side service that composes the wire.
  */
 
 import type {} from '@deepseek-ai/cordis'

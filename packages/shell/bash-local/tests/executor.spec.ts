@@ -159,10 +159,10 @@ describe('LocalBashExecutor.run', () => {
 })
 
 describe('LocalBashExecutor.start (background process handles)', () => {
-  it('start returns immediately with a running handle that settles as completed', async () => {
+  it('start resolves after process creation with a running handle that settles as completed', async () => {
     const { bash } = await setup()
     const before = Date.now()
-    const proc = bash.start(bash.resolve({ command: 'sleep 0.2; echo done' }))
+    const proc = await bash.start(bash.resolve({ command: 'sleep 0.2; echo done' }))
     expect(Date.now() - before).toBeLessThan(150)
     expect(proc.status).toBe('running')
     await proc.done
@@ -172,7 +172,7 @@ describe('LocalBashExecutor.start (background process handles)', () => {
 
   it('threads stdin and extra env into a background process', async () => {
     const { bash } = await setup()
-    const proc = bash.start(bash.resolve({
+    const proc = await bash.start(bash.resolve({
       command: 'cat; echo "[$BG_VAR][$DSH_BG_VAR]"',
       stdin: 'bg-stdin\n',
       env: { BG_VAR: 'bg-env' },
@@ -186,7 +186,7 @@ describe('LocalBashExecutor.start (background process handles)', () => {
 
   it('readOutput is consuming: increments are never re-delivered, and reads stay valid after exit', async () => {
     const { bash } = await setup()
-    const proc = bash.start(bash.resolve({ command: 'echo first; sleep 1; echo second' }))
+    const proc = await bash.start(bash.resolve({ command: 'echo first; sleep 1; echo second' }))
     const first = await readUntil(proc, 'first\n')
     expect(first).toBe('first\n')
     await proc.done
@@ -199,28 +199,28 @@ describe('LocalBashExecutor.start (background process handles)', () => {
 
   it('readOutput marks stderr sections', async () => {
     const { bash } = await setup()
-    const proc = bash.start(bash.resolve({ command: 'echo out; echo err >&2' }))
+    const proc = await bash.start(bash.resolve({ command: 'echo out; echo err >&2' }))
     await proc.done
     expect(proc.readOutput().delta).toBe('out\n[stderr]\nerr\n')
   })
 
   it('readOutput reports stderr-only deltas without a leading newline', async () => {
     const { bash } = await setup()
-    const proc = bash.start(bash.resolve({ command: 'echo err >&2' }))
+    const proc = await bash.start(bash.resolve({ command: 'echo err >&2' }))
     await proc.done
     expect(proc.readOutput().delta).toBe('[stderr]\nerr\n')
   })
 
   it('readOutput adds a separator only when stdout lacks a trailing newline', async () => {
     const { bash } = await setup()
-    const proc = bash.start(bash.resolve({ command: 'printf out; echo err >&2' }))
+    const proc = await bash.start(bash.resolve({ command: 'printf out; echo err >&2' }))
     await proc.done
     expect(proc.readOutput().delta).toBe('out\n[stderr]\nerr\n')
   })
 
   it('readOutput flags lossy reads and reports stdout spill paths', async () => {
     const { bash } = await setup({ maxOutputBytes: 100 })
-    const proc = bash.start(bash.resolve({ command: 'for i in $(seq 1 100); do printf "line-%04d\\n" $i; done' }))
+    const proc = await bash.start(bash.resolve({ command: 'for i in $(seq 1 100); do printf "line-%04d\\n" $i; done' }))
     await proc.done
     const read = proc.readOutput()
     // Window slid past offset 0 → lossy, spill path points at the full stream.
@@ -230,7 +230,7 @@ describe('LocalBashExecutor.start (background process handles)', () => {
 
   it('readOutput reports stderr spill paths', async () => {
     const { bash } = await setup({ maxOutputBytes: 100 })
-    const proc = bash.start(bash.resolve({ command: 'for i in $(seq 1 100); do printf "line-%04d\\n" $i >&2; done' }))
+    const proc = await bash.start(bash.resolve({ command: 'for i in $(seq 1 100); do printf "line-%04d\\n" $i >&2; done' }))
     await proc.done
     const read = proc.readOutput()
     expect(read.lossy).toBe(true)
@@ -240,7 +240,7 @@ describe('LocalBashExecutor.start (background process handles)', () => {
 
   it('kill() terminates the process group: true once, false after settlement', async () => {
     const { bash } = await setup()
-    const proc = bash.start(bash.resolve({ command: 'sleep 60' }))
+    const proc = await bash.start(bash.resolve({ command: 'sleep 60' }))
     expect(proc.kill()).toBe(true)
     await proc.done
     expect(proc.status).toBe('killed')
@@ -250,7 +250,7 @@ describe('LocalBashExecutor.start (background process handles)', () => {
 
   it('kill() returns false for a naturally completed process', async () => {
     const { bash } = await setup()
-    const proc = bash.start(bash.resolve({ command: 'true' }))
+    const proc = await bash.start(bash.resolve({ command: 'true' }))
     await proc.done
     expect(proc.status).toBe('completed')
     expect(proc.kill()).toBe(false)
@@ -261,7 +261,7 @@ describe('LocalBashExecutor.start (background process handles)', () => {
     // The child echoes AFTER arming the trap, so waiting for the marker
     // guarantees SIGTERM is already ignored when the kill lands (a fixed sleep
     // is load-flaky: a slow spawn would take the SIGTERM before the trap).
-    const proc = bash.start(bash.resolve({ command: 'trap \'\' TERM; echo armed; sleep 60' }))
+    const proc = await bash.start(bash.resolve({ command: 'trap \'\' TERM; echo armed; sleep 60' }))
     await readUntil(proc, 'armed')
     proc.kill()
     await proc.done
@@ -272,7 +272,7 @@ describe('LocalBashExecutor.start (background process handles)', () => {
   it('a spec.signal abort settles the handle as killed, not completed', async () => {
     const { bash } = await setup()
     const controller = new AbortController()
-    const proc = bash.start(bash.resolve({ command: 'sleep 60', signal: controller.signal }))
+    const proc = await bash.start(bash.resolve({ command: 'sleep 60', signal: controller.signal }))
     controller.abort()
     await proc.done
     expect(proc.status).toBe('killed')
@@ -281,20 +281,17 @@ describe('LocalBashExecutor.start (background process handles)', () => {
 
   it('a self-signal exit settles the handle as killed, not completed', async () => {
     const { bash } = await setup()
-    const proc = bash.start(bash.resolve({ command: 'kill -TERM $$' }))
+    const proc = await bash.start(bash.resolve({ command: 'kill -TERM $$' }))
     await proc.done
     expect(proc.status).toBe('killed')
     expect(proc.exitCode).toBeNull()
     expect(proc.signal).toBe('SIGTERM')
   })
 
-  it('a background spawn failure settles as killed with the error readable on stderr', async () => {
+  it('a background spawn failure rejects before publishing a process handle', async () => {
     const { bash } = await setup()
-    const proc = bash.start(bash.resolve({ command: 'true', workdir: '/nonexistent-dsh' }))
-    // done resolves (never rejects) even though the process never ran.
-    await expect(proc.done).resolves.toBeUndefined()
-    expect(proc.status).toBe('killed')
-    expect(proc.readOutput().delta).toContain('spawn failed:')
+    await expect(bash.start(bash.resolve({ command: 'true', workdir: '/nonexistent-dsh' })))
+      .rejects.toThrow()
   })
 })
 
@@ -308,7 +305,7 @@ describe('process lifecycle ownership (the subprocess service, not the executor)
 
     // The child prints its own pid ($$ = the detached bash group leader) so
     // the test can probe liveness through the public read API alone.
-    const proc = bash.start(bash.resolve({ command: 'echo $$; sleep 60' }))
+    const proc = await bash.start(bash.resolve({ command: 'echo $$; sleep 60' }))
     const pid = Number((await readUntil(proc, '\n')).trim())
     expect(Number.isInteger(pid) && pid > 0).toBe(true)
 
@@ -333,10 +330,10 @@ describe('process lifecycle ownership (the subprocess service, not the executor)
     await ctx.plugin(LocalBashExecutor, { graceMs: 200 })
     const bash = ctx.shell as LocalBashExecutor
 
-    const finished = bash.start(bash.resolve({ command: 'echo done' }))
+    const finished = await bash.start(bash.resolve({ command: 'echo done' }))
     await finished.done
     expect(finished.status).toBe('completed')
-    const trapping = bash.start(bash.resolve({ command: 'trap \'\' TERM; echo armed; sleep 60' }))
+    const trapping = await bash.start(bash.resolve({ command: 'trap \'\' TERM; echo armed; sleep 60' }))
     await readUntil(trapping, 'armed')
 
     await managerFiber.dispose()

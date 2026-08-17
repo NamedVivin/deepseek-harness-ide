@@ -5,7 +5,7 @@ import type {
   SubprocessOutcome,
   SubprocessTerminalForeground,
   SubprocessTerminalHandle,
-} from '@deepseek-ai/dsh-subprocess'
+} from '@deepseek-ai/dsh-subprocess-pty'
 import { TerminalError } from '@deepseek-ai/dsh-terminal'
 import type {
   TerminalBackendSession,

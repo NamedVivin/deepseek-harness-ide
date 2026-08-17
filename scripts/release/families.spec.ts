@@ -1,7 +1,13 @@
 /** Release family discovery, publish order, tag naming, and the bump judgements. */
 
+import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { releaseFamily, type ReleaseMember } from './families.ts'
+import {
+  DESKTOP_NATIVE_SMOKE_PROMOTION,
+  releaseFamily,
+  releasePromotions,
+  type ReleaseMember,
+} from './families.ts'
 import { compareVersions, nextVendorVersion, reachesPayload } from './bump.ts'
 
 /**
@@ -89,6 +95,32 @@ describe('release families', () => {
   it('drives the installed entry only for the family that publishes one', () => {
     expect(releaseFamily('dsh').installedEntry).toEqual({ packageName: '@deepseek-ai/dsh', binPath: 'lib/bin.js' })
     expect(releaseFamily('vendor').installedEntry).toBeUndefined()
+  })
+
+  it('holds only the desktop npm package for native-smoke promotion', () => {
+    const dsh = releaseFamily('dsh')
+    const desktop = member('apps/desktop', '@deepseek-ai/dsh-desktop')
+    const cli = member('apps/cli', '@deepseek-ai/dsh')
+
+    expect(dsh.publicationGate(desktop)).toBe(DESKTOP_NATIVE_SMOKE_PROMOTION)
+    expect(dsh.publicationGate(cli)).toBeUndefined()
+    expect(releaseFamily('vendor').publicationGate(member('vendor/cordis', '@deepseek-ai/cordis'))).toBeUndefined()
+    expect(releasePromotions(dsh, [desktop, cli], undefined)).toEqual(new Set())
+    expect(releasePromotions(dsh, [desktop, cli], DESKTOP_NATIVE_SMOKE_PROMOTION))
+      .toEqual(new Set([DESKTOP_NATIVE_SMOKE_PROMOTION]))
+    expect(() => releasePromotions(dsh, [desktop, cli], 'desktop-native-smoke,desktop-native-smoke'))
+      .toThrow('duplicate')
+    expect(() => releasePromotions(dsh, [desktop, cli], 'unsigned-desktop')).toThrow('does not recognize')
+  })
+
+  it('keeps the public desktop identity inside the ordinary dsh family', () => {
+    const dsh = releaseFamily('dsh')
+    const desktop = dsh.members(resolve(import.meta.dirname, '..', '..'))
+      .find(member => member.name === '@deepseek-ai/dsh-desktop')
+    if (desktop === undefined) throw new Error('desktop release member is missing')
+    expect(desktop.directory).toBe('apps/desktop')
+    expect(desktop.manifest.private).not.toBe(true)
+    expect(dsh.publicationGate(desktop)).toBe(DESKTOP_NATIVE_SMOKE_PROMOTION)
   })
 
   it('rejects an unknown family identifier', () => {

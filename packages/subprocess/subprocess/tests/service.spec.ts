@@ -1,13 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { PassThrough } from 'node:stream'
 import { Context } from '@deepseek-ai/cordis'
 import { scrubbedParentEnv, SubprocessRuntime } from '@deepseek-ai/dsh-subprocess'
 import type {
   SubprocessHandle,
   SubprocessOutputRead,
   SubprocessSpawnSpec,
-  SubprocessTerminalHandle,
-  SubprocessTerminalSpawnSpec,
 } from '@deepseek-ai/dsh-subprocess'
 
 /**
@@ -20,7 +17,7 @@ class StubSubprocessRuntime extends SubprocessRuntime {
     return `/bin/${command}`
   }
 
-  spawn(spec: SubprocessSpawnSpec): SubprocessHandle {
+  async spawn(spec: SubprocessSpawnSpec): Promise<SubprocessHandle> {
     const read: SubprocessOutputRead = { text: '', nextOffset: 0, lossy: false }
     const collected = spec.stdio.stdout !== 'pipe' && spec.stdio.stdout !== 'inherit'
       ? { stdout: { readFrom: () => read } }
@@ -37,24 +34,13 @@ class StubSubprocessRuntime extends SubprocessRuntime {
     }
   }
 
-  async spawnTerminal(spec: SubprocessTerminalSpawnSpec): Promise<SubprocessTerminalHandle> {
-    return {
-      pid: spec.argv.length,
-      output: new PassThrough(),
-      done: Promise.resolve({ exitCode: 0, signal: null }),
-      write: async () => {},
-      inspectForeground: async () => ({ processGroupId: 1, inputWaiting: true }),
-      signalForeground: async () => 1,
-      terminate: async () => {},
-    }
-  }
 }
 
 describe('SubprocessRuntime seam', () => {
   it('a concrete subclass registers as ctx.subprocess and serves the abstract API', async () => {
     const ctx = new Context()
     await ctx.plugin(StubSubprocessRuntime)
-    const handle = ctx.subprocess.spawn({
+    const handle = await ctx.subprocess.spawn({
       argv: ['true'],
       cwd: '/stub',
       stdio: { stdin: 'ignore', stdout: { maxBytes: 1 }, stderr: 'inherit' },

@@ -18,6 +18,7 @@ import type {
 } from '@deepseek-ai/dsh-client-runtime/client'
 import { apply as applyLocale, inject as localeInject } from '@deepseek-ai/dsh-client-locale/client'
 import type { ChatFileMentions, TurnTailOwnerProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
+import type { FileLocation } from '@deepseek-ai/dsh-tools'
 import { makeTranslate, stubSettingsScope } from '@deepseek-ai/dsh-client-test-runtime'
 import {
   fitProducedFiles, ProducedFiles, type ProducedFilesProps,
@@ -66,14 +67,17 @@ const turnLocation = (turn: number, deliverables?: DeliverablesTurnData): TurnLo
   return { turn, start: undefined, end: undefined, status: 'closed', steps: [], data }
 }
 
-const produced = (...values: ReadonlyArray<readonly [seq: number, path: string]>): DeliverablesTurnData => ({
-  produced: values.map(([seq, path]) => ({ seq, path })),
+const produced = (...values: ReadonlyArray<readonly [seq: number, path: string, line?: number]>): DeliverablesTurnData => ({
+  produced: values.map(([seq, path, line]) => ({
+    seq,
+    location: { path, ...(line === undefined ? {} : { line }) },
+  })),
 })
 
 function tailOwner(
   data: DeliverablesTurnData | undefined,
   seq: number,
-  openFile: (path: string) => void = () => {},
+  openFile: (location: FileLocation) => Promise<void> = async () => {},
   turn = 1,
 ): TurnTailOwnerProps {
   return { seq, openFile, turn: turnLocation(turn, data) }
@@ -175,15 +179,19 @@ function deliverablesOf(value: ConversationNodeAssembler, turn = 1): Readonly<De
 describe('produced-file Turn data', () => {
   it('deduplicates paths in first-seen order and stops at the closing Assistant seq', () => {
     const data = produced(
-      [3, 'out/index.html'],
+      [3, 'out/index.html', 12],
       [4, 'out/app.css'],
       [4, 'out/index.html'],
       [8, 'after.txt'],
     )
-    expect(producedForClosing(data, 6)).toEqual(['out/index.html', 'out/app.css'])
-    expect(selectProducedFiles(tailOwner(data, 6))).toEqual(['out/index.html', 'out/app.css'])
+    expect(producedForClosing(data, 6)).toEqual([
+      { path: 'out/index.html', line: 12 }, { path: 'out/app.css' },
+    ])
+    expect(selectProducedFiles(tailOwner(data, 6))).toEqual([
+      { path: 'out/index.html', line: 12 }, { path: 'out/app.css' },
+    ])
     expect(producedForClosing(undefined)).toEqual([])
-    expect(selectProducedFiles(tailOwner(undefined, 9, () => {}, 2))).toBeNull()
+    expect(selectProducedFiles(tailOwner(undefined, 9, async () => {}, 2))).toBeNull()
   })
 
   it('folds successful diff and generic-edit calls while ignoring reads, failures, and missing locations', () => {
@@ -202,7 +210,7 @@ describe('produced-file Turn data', () => {
     ])
 
     expect(producedForClosing(deliverablesOf(value))).toEqual([
-      'out/index.html', 'out/app.css', 'notes.md',
+      { path: 'out/index.html' }, { path: 'out/app.css' }, { path: 'notes.md' },
     ])
   })
 
@@ -259,7 +267,7 @@ describe('produced-file Turn data', () => {
 
     value.prepend([at(1, 'turn/start', { turn: 1 })], false)
     value.flush()
-    expect(producedForClosing(deliverablesOf(value))).toEqual(['history.txt'])
+    expect(producedForClosing(deliverablesOf(value))).toEqual([{ path: 'history.txt' }])
   })
 
   it('extends the same Turn data incrementally on live append', () => {
@@ -269,12 +277,14 @@ describe('produced-file Turn data', () => {
       result(3, 'first'),
     ])
     const first = deliverablesOf(value)
-    expect(producedForClosing(first)).toEqual(['first.txt'])
+    expect(producedForClosing(first)).toEqual([{ path: 'first.txt' }])
 
     value.append(call(4, 'second', diff('second.txt')))
     value.append(result(5, 'second'))
     value.flush()
-    expect(producedForClosing(deliverablesOf(value))).toEqual(['first.txt', 'second.txt'])
+    expect(producedForClosing(deliverablesOf(value))).toEqual([
+      { path: 'first.txt' }, { path: 'second.txt' },
+    ])
   })
 })
 
@@ -308,7 +318,8 @@ describe('ProducedFiles row', () => {
 
   it('keeps one measured line, updates on resize, and opens a file or the workspace folder', () => {
     const paths = ['deep/a.html', 'b.css', 'c.ts', 'd.ts', 'e.ts', 'f.ts', 'g.ts']
-    const openFile = vi.fn<(path: string) => void>()
+    const locations = paths.map(path => ({ path }))
+    const openFile = vi.fn<(location: FileLocation) => Promise<void>>(async () => {})
     let available = 226
     let resize: ResizeObserverCallback | undefined
     const disconnect = vi.fn()
@@ -337,7 +348,7 @@ describe('ProducedFiles row', () => {
       })
 
     const view = render(
-      <ProducedFiles matched={paths} openFile={openFile} {...capability(true)} t={t} />,
+      <ProducedFiles matched={locations} openFile={openFile} {...capability(true)} t={t} />,
     )
     expect(view.getByText('产物')).toBeTruthy()
     const row = view.container.querySelector('[data-produced-files-row]')
@@ -350,11 +361,11 @@ describe('ProducedFiles row', () => {
     expect(chip.getAttribute('title')).toBe('deep/a.html')
     expect(view.queryByRole('button', { name: '打开 g.ts' })).toBeNull()
     fireEvent.click(chip)
-    expect(openFile).toHaveBeenCalledWith('deep/a.html')
+    expect(openFile).toHaveBeenCalledWith({ path: 'deep/a.html' })
 
     const showFolder = view.getByRole('button', { name: '在文件夹中显示' })
     fireEvent.click(showFolder)
-    expect(openFile).toHaveBeenLastCalledWith('.')
+    expect(openFile).toHaveBeenLastCalledWith({ path: '.' })
 
     available = 150
     act(() => { resize?.([], {} as ResizeObserver) })
@@ -371,7 +382,7 @@ describe('ProducedFiles row', () => {
     // shrinks; the replacement observer must skip those stale slots.
     observeNode.mockClear()
     view.rerender(
-      <ProducedFiles matched={paths.slice(0, 1)} openFile={openFile} {...capability(true)} t={t} />,
+      <ProducedFiles matched={locations.slice(0, 1)} openFile={openFile} {...capability(true)} t={t} />,
     )
     expect(within(row).getAllByRole('button')).toHaveLength(1)
     expect(observeNode).toHaveBeenCalledTimes(3)
@@ -382,14 +393,16 @@ describe('ProducedFiles row', () => {
   })
 
   it('keeps the folder action absent without overflow or a local native opener', () => {
-    const openFile = vi.fn<(path: string) => void>()
+    const openFile = vi.fn<(location: FileLocation) => Promise<void>>(async () => {})
     const view = render(
-      <ProducedFiles matched={['a.md']} openFile={openFile} {...capability(true)} t={t} />,
+      <ProducedFiles matched={[{ path: 'a.md' }]} openFile={openFile} {...capability(true)} t={t} />,
     )
     const overflowing = ['a.md', 'b.md', 'c.md', 'd.md', 'e.md', 'f.md', 'g.md']
     expect(view.queryByRole('button', { name: '在文件夹中显示' })).toBeNull()
     for (const unavailable of [capability(false), capability(true, false), capability(undefined)]) {
-      view.rerender(<ProducedFiles matched={overflowing} openFile={openFile} {...unavailable} t={t} />)
+      view.rerender(
+        <ProducedFiles matched={overflowing.map(path => ({ path }))} openFile={openFile} {...unavailable} t={t} />,
+      )
       expect(view.queryByRole('button', { name: '在文件夹中显示' })).toBeNull()
     }
   })
@@ -397,8 +410,8 @@ describe('ProducedFiles row', () => {
   it('uses singular English copy when exactly one file is hidden', () => {
     const view = render(
       <ProducedFiles
-        matched={['a.md', 'b.md', 'c.md', 'd.md', 'e.md', 'f.md', 'g.md']}
-        openFile={() => {}}
+        matched={['a.md', 'b.md', 'c.md', 'd.md', 'e.md', 'f.md', 'g.md'].map(path => ({ path }))}
+        openFile={async () => {}}
         {...capability(false)}
         t={makeTranslate(en)}
       />,
@@ -415,8 +428,8 @@ describe('producedFileMentions resolver', () => {
   it('resolves exact paths and unique basenames; ambiguity and unknowns stay unresolved', () => {
     const opened: string[] = []
     const resolver = producedFileMentions(
-      ['out/index.html', 'a/style.css', 'b/style.css'],
-      (path) => { opened.push(path) },
+      [{ path: 'out/index.html', line: 7 }, { path: 'a/style.css' }, { path: 'b/style.css' }],
+      async (location) => { opened.push(`${location.path}:${String(location.line ?? '')}`) },
       label,
     )
     // Unique basename resolves to its full path; the full path rides title.
@@ -424,7 +437,7 @@ describe('producedFileMentions resolver', () => {
     expect(byBasename?.label).toBe('打开 out/index.html')
     expect(byBasename?.title).toBe('out/index.html')
     byBasename?.open()
-    expect(opened).toEqual(['out/index.html'])
+    expect(opened).toEqual(['out/index.html:7'])
     // An exact path resolves even when its basename is ambiguous.
     const exact = resolver.resolve('a/style.css')
     expect(exact?.title).toBe('a/style.css')
@@ -483,7 +496,7 @@ describe('plugin registration', () => {
     const owner = tailOwner(
       produced([2, 'site/report.html']),
       3,
-      (path) => { opened.push(path) },
+      async (location) => { opened.push(location.path) },
     )
     const service = (ctx as unknown as { get(name: string): ChatFileMentions | undefined }).get('chatFileMentions')
     const mentions = service?.forClosing(owner)

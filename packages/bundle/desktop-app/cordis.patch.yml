@@ -1,0 +1,91 @@
+# Packaged desktop substitutions over dsh-base + dsh-web-app + dsh-ide-app.
+# `desktopRuntime` and the physical IPC adapter are installed by the Node
+# sidecar before this tree mounts. The renderer never supplies either value.
+
+# Desktop has no HTTP server, Web asset host, or source HMR surface.
+- id: web-startup
+  disabled: true
+
+- id: webserver
+  disabled: true
+
+- id: web-runtime
+  disabled: true
+
+- id: client-hmr
+  disabled: true
+
+# Dynamic Cordis authoring and browser-side code evaluation are outside the
+# signed first-party Client roster.
+- id: cordis-host-runner
+  disabled: true
+
+- id: ui-cordis
+  disabled: true
+
+# Host description must not advertise the API Proxy's native path opener: the
+# desktop renderer exposes workspace-relative files through the IDE instead.
+- id: api-gateway
+  config:
+    nativeOpen: false
+
+# Include treats `name` on an id-targeted patch as an assertion, so carrier
+# substitution disables each Web/base row and inserts one desktop provider.
+# The carrier-neutral core rows (`connection`, `modules`) and the common
+# Typert/ApiProxy graph remain active.
+- id: connection-transport
+  disabled: true
+
+- id: module-delivery
+  disabled: true
+
+- id: directory-picker
+  disabled: true
+
+- id: subprocess
+  disabled: true
+
+# The first desktop release has one immutable, package-owned preset and no
+# authoring root. The sidecar supplies the signed resource path as a Host fact.
+- id: agent-presets
+  inject: [desktopRuntime]
+  config:
+    default: desktop-default
+    includeUserRoot: false
+    roots:
+      - path: !!js ctx.desktopRuntime.presetRoot
+        trust: system
+
+# Preset selection is not part of the first desktop product.
+- id: ui-agent-preset
+  disabled: true
+
+- insert:
+    - id: connection-transport-desktop
+      name: '@deepseek-ai/dsh-client-connection-desktop'
+      config:
+        maxDesktopBodyBytes: !!js ctx.desktopRuntime.config.maxDesktopBodyBytes
+        maxDesktopChunkBytes: !!js ctx.desktopRuntime.config.maxDesktopChunkBytes
+        maxDesktopInflightBytes: !!js ctx.desktopRuntime.config.maxDesktopInflightBytes
+
+    - id: module-delivery-desktop
+      name: '@deepseek-ai/dsh-client-modules-desktop'
+
+    - id: directory-picker-electron
+      name: '@deepseek-ai/dsh-host-directory-picker-electron'
+
+    - id: subprocess-guardian
+      name: '@deepseek-ai/dsh-subprocess-guardian'
+      config:
+        maxBodyBytes: !!js ctx.desktopRuntime.config.maxDesktopBodyBytes
+        maxChunkBytes: !!js ctx.desktopRuntime.config.maxDesktopChunkBytes
+        maxInflightBytes: !!js ctx.desktopRuntime.config.maxDesktopInflightBytes
+
+    - id: workspace-registration
+      name: '@deepseek-ai/dsh-host-workspace-registration'
+
+    - id: ui-directory-picker-desktop
+      name: '@deepseek-ai/dsh-client-ui-directory-picker-desktop'
+
+    - id: agent-presets-desktop
+      name: '@deepseek-ai/dsh-agent-presets-desktop'

@@ -1,6 +1,6 @@
 {
   "name": "@deepseek-ai/dsh-client-connection",
-  "description": "Wire consumer layer: HTTP-up/WebSocket-down client, ConnectionController dual streams with reconnect, and fixture api",
+  "description": "Carrier-neutral Host RPC registry and Client connection controller",
   "version": "0.1.0-rc.5",
   "publishConfig": {
     "access": "public"
@@ -38,14 +38,10 @@
   },
   "license": "MIT",
   "dependencies": {
-    "@deepseek-ai/dsh-attachment": "workspace:^",
     "@deepseek-ai/dsh-host-apiproxy": "workspace:^",
-    "@deepseek-ai/dsh-commands": "workspace:^",
     "@deepseek-ai/dsh-llm": "workspace:^",
     "@deepseek-ai/dsh-session": "workspace:^",
-    "@deepseek-ai/dsh-tools": "workspace:^",
-    "@deepseek-ai/schemastery": "workspace:^",
-    "ws": "^8.21.0"
+    "@deepseek-ai/dsh-tools": "workspace:^"
   },
   "files": [
     "lib/index.js",
@@ -54,14 +50,11 @@
     "lib/types/**/*.d.ts"
   ],
   "peerDependencies": {
-    "@deepseek-ai/dsh-host-webserver": "workspace:^",
     "@deepseek-ai/dsh-invariants": "workspace:^",
     "@deepseek-ai/cordis": "workspace:^"
   },
   "devDependencies": {
-    "@deepseek-ai/dsh-host-webserver": "workspace:^",
     "@deepseek-ai/dsh-invariants": "workspace:^",
-    "@types/ws": "^8.18.1",
     "@deepseek-ai/cordis": "workspace:^"
   }
 }

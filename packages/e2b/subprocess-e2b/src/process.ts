@@ -155,7 +155,7 @@ function waitWithSignal<T>(promise: Promise<T>, signal: AbortSignal | undefined)
   })
 }
 
-/** E2B-backed subprocess handle with deferred remote PID acquisition. */
+/** E2B-backed subprocess handle retained privately until remote ownership is ready. */
 export class E2BSubprocessHandle implements SubprocessHandle {
   readonly stdin: Writable | undefined
   readonly stdout: PassThrough | undefined
@@ -174,7 +174,7 @@ export class E2BSubprocessHandle implements SubprocessHandle {
   private readonly stderrReader: E2BOutputReader | undefined
   private readonly paths: RemotePaths
   private controlEnvs: Record<string, string> = {}
-  private remotePid = -1
+  private remotePid: number | undefined
   private outputTransportError: Error | undefined
   private outputDrainExpired = false
   private stateDirectoryCreated = false
@@ -184,7 +184,7 @@ export class E2BSubprocessHandle implements SubprocessHandle {
   private terminationSignal: NodeJS.Signals | null = null
 
   /**
-   * Begin an E2B command without blocking the synchronous subprocess spawn call.
+   * Begin an E2B command while its provider retains the unpublished handle.
    * @param runtime - Shared E2B sandbox owner.
    * @param spec - Fully resolved subprocess request.
    * @param stateDir - Remote directory retaining process identity, status, and valid spills.
@@ -225,9 +225,21 @@ export class E2BSubprocessHandle implements SubprocessHandle {
     if (spec.signal?.aborted === true) this.terminate()
   }
 
-  /** Remote process id after start; `-1` while E2B startup is pending or after it fails. */
+  /** Remote process-group id after startup publication. */
   get pid(): number {
+    if (this.remotePid === undefined) {
+      throw new Error('subprocess-e2b: process id requested before startup completed')
+    }
     return this.remotePid
+  }
+
+  /**
+   * Wait until the remote wrapper has published a valid process-group id and
+   * this handle owns that group. Startup rollback settles before rejection.
+   * @returns when the handle is safe for the provider to publish.
+   */
+  async waitUntilReady(): Promise<void> {
+    await this.readyState.promise
   }
 
   /** @inheritdoc */
@@ -260,7 +272,7 @@ export class E2BSubprocessHandle implements SubprocessHandle {
         this.markQuiescent()
         return true
       }
-      if (this.remotePid <= 0) {
+      if (this.remotePid === undefined) {
         const attempt = this.terminationAttempt
         if (attempt !== undefined && await waitWithSignal(attempt.catch(() => undefined), signal) === WAIT_ABORTED) {
           return false
@@ -293,7 +305,7 @@ export class E2BSubprocessHandle implements SubprocessHandle {
       }
       throw error
     }
-    const processGroupId = this.remotePid > 0 ? this.remotePid : handle.pid
+    const processGroupId = this.remotePid ?? handle.pid
     while (await this.groupAlive(sandbox, processGroupId, signal)) {
       this.throwTerminationFailure()
       if (!await waitTick(this.pollMs, signal)) return false
@@ -559,7 +571,7 @@ export class E2BSubprocessHandle implements SubprocessHandle {
   }
 
   private async rollbackPublishedFailure(error: unknown): Promise<unknown> {
-    if (this.remotePid <= 0 || this.quiescenceProven) return error
+    if (this.remotePid === undefined || this.quiescenceProven) return error
     this.terminate()
     try {
       await this.waitForExit()
@@ -599,13 +611,13 @@ export class E2BSubprocessHandle implements SubprocessHandle {
       this.markQuiescent()
       return
     }
-    if (!isValidProcessId(handle.pid) && this.remotePid <= 0) {
+    if (!isValidProcessId(handle.pid) && this.remotePid === undefined) {
       await handle.kill()
       this.markQuiescent()
       return
     }
     const sandbox = await this.runtime.getSandbox()
-    const processGroupId = this.remotePid > 0 ? this.remotePid : handle.pid
+    const processGroupId = this.remotePid ?? handle.pid
     await this.terminateGroup(sandbox, handle, processGroupId)
   }
 

@@ -2,11 +2,11 @@
 
 [English](README.md) | 中文
 
-这是一个基于 `ctx.subprocess.spawnTerminal`、为 `ctx.terminals` 提供的持久 shell 后端。它在共享 `ctx.sandboxPolicy` 下启动交互式 shell，保留有界的逐行输出并检测就绪状态；进程管理提供方则负责 PTY 分配、环境清理、前台进程组、信号发送和完整终端会话清理。因此，同一个 PTY 后端可以与本地或远程执行世界提供方组合。
+这是一个基于 `ctx.subprocessPty.spawnTerminal`、为 `ctx.terminals` 提供的持久 shell 后端。它在共享 `ctx.sandboxPolicy` 下启动交互式 shell，保留有界的逐行输出并检测就绪状态；PTY provider 则负责分配、环境清理、前台进程组、信号发送和完整终端会话清理。因此，同一个后端可独立于普通 `ctx.subprocess` 与本地或远程 PTY provider 组合。
 
 ## 插件（`terminal-bash`）
 
-该插件注入 `pty`、`sandboxPolicy` 和 `subprocess`，然后注册所配置的后端类型（`shell`）。`danger-full-access` 无需沙箱提供方即可直接启动 shell；受限模式要求同一执行世界中存在 `ctx.sandbox`，并通过它包装确切的 shell argv，未挂载时会在 spawn 前失败。spawn 时，一次 `ctx.sandboxPolicy.resolve({ session })` 调用会同时给出实际模式与会话工作区根目录；调用方省略 cwd 时，同一根目录也是 shell 的默认 cwd。当某个所有者存在开放的 PTY 或正在进行 spawn 时，如果配置变更会得到不同的实际模式，系统会在对应 `sandbox/mode` 事件提交前拒绝该变更。该限制绑定到确切所有者，因此即使提供方重新加载并保留现有会话，它仍然有效。更改模式前，请等待创建完成并关闭会话，避免以更宽权限打开的终端在权限降级后继续存在。
+该插件注入 `terminals`、`sandboxPolicy` 和 `subprocessPty`，然后注册所配置的后端类型（`shell`）。`danger-full-access` 无需沙箱提供方即可直接启动 shell；受限模式要求同一执行世界中存在 `ctx.sandbox`，并通过它包装确切的 shell argv，未挂载时会在 spawn 前失败。spawn 时，一次 `ctx.sandboxPolicy.resolve({ session })` 调用会同时给出实际模式与会话工作区根目录；调用方省略 cwd 时，同一根目录也是 shell 的默认 cwd。当某个所有者存在开放的 PTY 或正在进行 spawn 时，如果配置变更会得到不同的实际模式，系统会在对应 `sandbox/mode` 事件提交前拒绝该变更。该限制绑定到确切所有者，因此即使提供方重新加载并保留现有会话，它仍然有效。更改模式前，请等待创建完成并关闭会话，避免以更宽权限打开的终端在权限降级后继续存在。
 
 就绪检测结合以下机制：由前台状态验证的私有 bash 提示符标记、提供方报告的前台 stdin 等待事实、静默回退和绝对超时。只有最新自有标记之后的可打印尾部与受控 `PS1` 完全相等，标记才算就绪；即使 OSC 标记和提示符被拆到多个数据回调中也一样。因此，较早提示符之后的回显输入或输出无法使当前 send 完成。提供方写入前收集的提示符与静默证据，包括写入前前台检查仍在等待时收集的证据，都会在写入边界丢弃。如果 bash 在终端提供方发布其重新取得前台进程组的状态前打印标记，轮询会在普通静默上限之后再保留该候选状态 `handoffGraceMs`，使恰好同时发生的前台交接有机会胜出。因此，继承 `PROMPT_COMMAND` 的交互式子进程无法一直抑制推断空闲就绪直至绝对超时。未知的前台状态绝不会作为精确空闲的正向信号。同样，一次 send 之前就已存在的前台进程组 stdin 等待并不代表写入后就绪：必须先观察到同一进程组脱离该等待，之后再次进入等待才能使该次 send 完成；前台进程组发生变化则构成新的证据。尚未发布的启动过程中，回退路径要求已经观察到输出；零输出静默不能发布空会话，超时则拒绝 spawn。取消操作会关闭尚未发布的 shell，并以调用方提供的确切中止原因拒绝；`TerminalBackendCleanupError` 会单独保留清理失败。调用方的 signal 会转发给终端分配与就绪初始化；发布后，句柄负责其生命周期。未完成的终端控制序列受 `maxReadBytes` 限制；超过上限后，系统会丢弃内容直到其终止符。格式错误的 UTF-8 终端输出使用替换字符；末尾的回车会跨回调保留，使拆分的 CRLF 合并为一个换行。
 

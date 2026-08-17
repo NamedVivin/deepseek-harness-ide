@@ -121,6 +121,12 @@ Ownership truth is the record's ordered `sessionIds`, never derived from session
 
 Sessions get their cwd at create time from whoever creates them, not from this registry — the API gateway resolves a new session's cwd from the chosen workspace's `path` (falling back to an explicit or default cwd), creates the session so the cwd lands in its immutable [`SessionHeader`](persistence.md#sessionheader--metadata-beside-the-log), then calls `attachSession`, which re-validates that stored header cwd against the workspace path. On the first successful start, the registry bootstraps history from persisted headers alone (`id`, `cwd`, `createdAt` — never event bodies), grouping sessions with a valid canonical cwd into per-directory workspaces, newest first; the initialized marker is written last so an interrupted bootstrap resumes safely. The bootstrap is one-time: cwd-less legacy sessions stay Ungrouped, and sessions created afterwards join a workspace only through `attachSession`.
 
+## IDE file authority
+
+The desktop IDE reaches files through `ctx.workspaceFiles`, never by sending an authority-bearing root path. Each `list`, `read`, `save`, or `resolveLocation` request starts with a Host-issued `WorkspaceId`; the gateway re-resolves its canonical root through `ctx.workspaceRegistry`, validates relative path segments, and performs work through the composition's existing `ctx.fs` provider. Directory reads use provider-side bounded enumeration, text reads enforce a byte limit and equal pre/post versions, and saves require `replaceIfVersion` plus the explicit workspace-write sandbox policy. Stable result codes cover invalid paths, containment, file kind, encoding, size, permission, changed-read, and version-conflict failures.
+
+`ctx.workspaceRegistration` is the native-picker BFF. It consumes the selected absolute path inside the Host, rechecks cancellation, registers it through `ctx.workspaceRegistry`, and returns only the resulting Workspace projection; the renderer never receives chooser authority or submits a path to this method.
+
 ## Consumers
 
 [dsh-host-apiproxy](../../packages/host/apiproxy) is the product consumer: it serves workspace CRUD to GUI clients over `ctx.workspaceRegistry` and performs the create-session-then-attach flow above. [dsh-agent-instructions](../../packages/context/agent-instructions) is **not** a consumer despite the name: it discovers AGENTS.md-style instruction files under an agent's own cwd and never touches `ctx.workspaceRegistry` — the shared word refers to the user's working directory, not to this registry's entities.
@@ -148,6 +154,65 @@ abstract capability(): DirectoryPickerCapability
 ```
 
 Source: [`packages/host/directory-picker/src/index.ts:131`](../../packages/host/directory-picker/src/index.ts)
+
+<a id="ctxworkspacefiles--workspacefilesgateway"></a>
+
+### `ctx.workspaceFiles` — `WorkspaceFilesGateway`
+
+Host-owned workspace file gateway published through generated Typert Remote descriptors.
+
+```ts cordis-catalog
+/**
+ * List one direct workspace directory without materializing more than the configured entry limit.
+ * @param request - Registered workspace and canonical relative directory.
+ * @param signal - Cancels filesystem work.
+ * @returns stable entries or one business failure.
+ */
+@Remote('list') async list(request: WorkspaceFilesListRequest, signal?: AbortSignal): Promise<WorkspaceFilesResult<WorkspaceFilesListValue>>
+
+/**
+ * Read one regular UTF-8 file and reject a mutation observed during the bounded read.
+ * @param request - Registered workspace and canonical relative file.
+ * @param signal - Cancels filesystem work.
+ * @returns stable content/version pair or one business failure.
+ */
+@Remote('read') async read(request: WorkspaceFilesReadRequest, signal?: AbortSignal): Promise<WorkspaceFilesResult<WorkspaceFilesReadValue>>
+
+/**
+ * Replace one existing file only when its opaque observed revision still matches.
+ * @param request - Complete content and compare-and-swap basis.
+ * @param signal - Cancels before atomic publication.
+ * @returns the durable new revision or one business failure.
+ */
+@Remote('save') async save(request: WorkspaceFilesSaveRequest, signal?: AbortSignal): Promise<WorkspaceFilesResult<WorkspaceFilesSaveValue>>
+
+/**
+ * Resolve an untrusted model-facing location into a canonical relative IDE identity.
+ * @param request - Registered workspace and absolute or relative candidate.
+ * @param signal - Cancels filesystem work.
+ * @returns safe location metadata or one business failure.
+ */
+@Remote('resolveLocation') async resolveLocation( request: WorkspaceFilesResolveLocationRequest, signal?: AbortSignal, ): Promise<WorkspaceFilesResult<WorkspaceFilesResolveLocationValue>>
+```
+
+Source: [`packages/host/workspace-files/src/index.ts:159`](../../packages/host/workspace-files/src/index.ts)
+
+<a id="ctxworkspaceregistration--workspaceregistrationgateway"></a>
+
+### `ctx.workspaceRegistration` — `WorkspaceRegistrationGateway`
+
+Remote gateway that never accepts a renderer-supplied filesystem path.
+
+```ts cordis-catalog
+/**
+ * Open the selected Host picker and register its result while the caller remains live.
+ * @param signal - Renderer request lifetime; a late chooser result is discarded after abort.
+ * @returns the registered Workspace, cancellation, or a stable business failure.
+ */
+@Remote('pickAndRegister') async pickAndRegister(signal?: AbortSignal): Promise<WorkspaceRegistrationResult>
+```
+
+Source: [`packages/host/workspace-registration/src/index.ts:45`](../../packages/host/workspace-registration/src/index.ts)
 
 <a id="ctxworkspaceregistry--workspaceregistry"></a>
 

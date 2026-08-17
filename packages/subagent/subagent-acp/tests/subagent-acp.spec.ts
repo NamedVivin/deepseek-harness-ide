@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url'
 import SubagentRuntime from '@deepseek-ai/dsh-subagent'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
-import type { SubprocessOutcome } from '@deepseek-ai/dsh-subprocess'
+import type { SubprocessHandle, SubprocessOutcome, SubprocessSpawnSpec } from '@deepseek-ai/dsh-subprocess'
 import * as acp from '../src/index.ts'
 import { acpStopReason, acpContentText, DEFAULT_DISPOSE_EOF_GRACE_MS, DEFAULT_DISPOSE_GRACE_MS, disposeAcpChild, startAcpRun, toAcpPrompt, type AcpRunSpec } from '../src/run.ts'
 import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
@@ -24,6 +24,19 @@ import { spawnSubprocess } from '@deepseek-ai/dsh-subprocess-local/src/spawn.ts'
  */
 
 const mockServer = fileURLToPath(new URL('./mock-acp-server.ts', import.meta.url))
+
+/** Adapt the local plumbing helper to the public provider publication point. */
+async function spawnReady(spec: SubprocessSpawnSpec): Promise<SubprocessHandle> {
+  const child = spawnSubprocess(spec)
+  try {
+    await child.ready
+    return child
+  } catch (error: unknown) {
+    await child.done.catch(() => undefined)
+    await child.waitForExit()
+    throw error
+  }
+}
 
 /** A parent Agent stub. The ACP backend reads exactly one thing off it: the session header's cwd (the workspace its child inherits). */
 const fakeParent = { id: 'parent', session: { header: { cwd: process.cwd() } } } as unknown as Agent
@@ -186,16 +199,6 @@ describe('disposeAcpChild (the backend-owned teardown ladder over seam verbs)', 
     expectHostTermination(outcome, 'SIGKILL')
   })
 
-  it('observes a spawn-level rejection and returns without a process to reap', async () => {
-    const child = spawnSubprocess({
-      argv: [process.execPath, '--input-type=module', '--eval', ''],
-      cwd: '/nonexistent-dir-dsh-acp-ladder-test',
-      stdio: { stdin: 'ignore', stdout: { maxBytes: 1000 }, stderr: { maxBytes: 1000 } },
-      graceMs: 200,
-    })
-    await expect(disposeAcpChild(child, 1_000)).resolves.toBeUndefined()
-    await expect(child.done).rejects.toThrow()
-  })
 })
 
 describe('cwd resolution', () => {
@@ -450,7 +453,7 @@ describe('dsh-subagent-acp', () => {
       await expect(startAcpRun(
         request('p', controller.signal),
         // `touch <sentinel>` — runs only if the process is actually spawned.
-        { command: 'touch', args: [sentinel], cwd: tmp, permission: 'reject', env: {}, disposeEofGraceMs: DEFAULT_DISPOSE_EOF_GRACE_MS, disposeGraceMs: DEFAULT_DISPOSE_GRACE_MS, spawn: spawnSubprocess },
+        { command: 'touch', args: [sentinel], cwd: tmp, permission: 'reject', env: {}, disposeEofGraceMs: DEFAULT_DISPOSE_EOF_GRACE_MS, disposeGraceMs: DEFAULT_DISPOSE_GRACE_MS, spawn: spawnReady },
       )).rejects.toThrow('aborted before the ACP child started')
       // The binary was never launched — no sentinel.
       expect(existsSync(sentinel)).toBe(false)
@@ -475,7 +478,7 @@ describe('dsh-subagent-acp', () => {
         },
         disposeEofGraceMs: 1000,
         disposeGraceMs: 100,
-        spawn: spawnSubprocess,
+        spawn: spawnReady,
       })).rejects.toThrow('ACP child published without a session id')
       // Startup rejects only after its private child reaches quiescence. The
       // marker proves rollback closed stdin and allowed the child's EOF flush.
@@ -503,7 +506,7 @@ describe('dsh-subagent-acp', () => {
         // small so the whole ladder finishes well within the 4000ms bound.
         disposeEofGraceMs: 150,
         disposeGraceMs: 150,
-        spawn: spawnSubprocess,
+        spawn: spawnReady,
       }
       const run = await startAcpRun(request(), spec)
       // Wait until the child has BOOTED AND ARMED THE TRAP (a condition, not a
@@ -551,7 +554,7 @@ describe('dsh-subagent-acp', () => {
         },
         disposeEofGraceMs: 2000,
         disposeGraceMs: 50,
-        spawn: spawnSubprocess,
+        spawn: spawnReady,
       }
       const run = await startAcpRun(request(), spec)
       // Wait until the child is fully booted with its prompt in flight (its ACP
@@ -585,7 +588,7 @@ describe('dsh-subagent-acp', () => {
         // Tiny EOF grace so the ignored-EOF window elapses quickly.
         disposeEofGraceMs: 150,
         disposeGraceMs: 2000,
-        spawn: spawnSubprocess,
+        spawn: spawnReady,
       }
       const run = await startAcpRun(request(), spec)
       await waitForFile(ready)
@@ -681,7 +684,7 @@ describe('dsh-subagent-acp', () => {
   it('rejects a spawn failure after provider-owned cleanup', async () => {
     await expect(startAcpRun(
       request(),
-      { command: '/nonexistent/acp-agent-binary', args: [], cwd: process.cwd(), permission: 'reject', env: {}, disposeEofGraceMs: DEFAULT_DISPOSE_EOF_GRACE_MS, disposeGraceMs: DEFAULT_DISPOSE_GRACE_MS, spawn: spawnSubprocess },
+      { command: '/nonexistent/acp-agent-binary', args: [], cwd: process.cwd(), permission: 'reject', env: {}, disposeEofGraceMs: DEFAULT_DISPOSE_EOF_GRACE_MS, disposeGraceMs: DEFAULT_DISPOSE_GRACE_MS, spawn: spawnReady },
     )).rejects.toThrow()
   })
 
@@ -765,7 +768,7 @@ describe('dsh-subagent-acp', () => {
         env: { MOCK_CRASH_ON_PROMPT: '1' },
         disposeEofGraceMs: DEFAULT_DISPOSE_EOF_GRACE_MS,
         disposeGraceMs: DEFAULT_DISPOSE_GRACE_MS,
-        spawn: spawnSubprocess,
+        spawn: spawnReady,
         onError: (error, stopReason) => { errors.push({ message: error.message, stopReason }) },
       },
     )
@@ -804,7 +807,7 @@ describe('dsh-subagent-acp', () => {
         env: { MOCK_CRASH_ON_PROMPT: '1' },
         disposeEofGraceMs: DEFAULT_DISPOSE_EOF_GRACE_MS,
         disposeGraceMs: DEFAULT_DISPOSE_GRACE_MS,
-        spawn: spawnSubprocess,
+        spawn: spawnReady,
         onError: () => { throw new Error('sink boom') },
       },
     )

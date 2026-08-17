@@ -277,10 +277,10 @@ class LocalLspProvider implements LspProvider {
       // Read inside the workspace queue but before spawning: a queued query sees current bytes when
       // its turn starts, while an invalid source still cannot leave an idle process pooled.
       const source = await readHostSource(this.fs, request.filePath, workspace, this.config.maxDocumentBytes, querySignal)
-      // Disposal may have snapshotted the instance map while host I/O was pending. Re-check before a
-      // synchronous get-or-create so every spawned process remains owned by teardown.
+      // Disposal may have snapshotted the instance map while host I/O was pending. Re-check before
+      // creating a process so every setup remains owned by the provider lifetime.
       this.assertActive(querySignal)
-      let instance = this.instanceFor(workspaceKey, workspace)
+      let instance = await this.instanceFor(workspaceKey, workspace)
       try {
         return await instance.query(request, source, querySignal)
       } catch (error) {
@@ -290,7 +290,7 @@ class LocalLspProvider implements LspProvider {
         await instance.dispose()
         this.evictIfCurrent(workspaceKey, instance)
         this.assertActive(querySignal)
-        instance = this.instanceFor(workspaceKey, workspace)
+        instance = await this.instanceFor(workspaceKey, workspace)
         return await instance.query(request, source, querySignal)
       } finally {
         // Reach quiescence before dropping a dead slot; a replacement must survive this ownership check.
@@ -316,12 +316,18 @@ class LocalLspProvider implements LspProvider {
     return result
   }
 
-  /** Return or synchronously publish the one instance for a canonical workspace. */
-  private instanceFor(workspaceKey: WorkspaceKey, workspace: HostWorkspace): LspInstance {
+  /** Return or publish the one ready process handle for a canonical workspace. */
+  private async instanceFor(workspaceKey: WorkspaceKey, workspace: HostWorkspace): Promise<LspInstance> {
     this.assertActive()
     const existing = this.instances.get(workspaceKey)
     if (existing !== undefined) return existing
-    const created = this.createInstance(workspace)
+    const created = await this.createInstance(workspace)
+    try {
+      this.assertActive(this.lifetime.signal)
+    } catch (error: unknown) {
+      await created.dispose()
+      throw error
+    }
     this.instances.set(workspaceKey, created)
     return created
   }
@@ -332,7 +338,7 @@ class LocalLspProvider implements LspProvider {
     if (this.instances.get(workspace) === instance) this.instances.delete(workspace)
   }
 
-  private createInstance(workspace: HostWorkspace): LspInstance {
+  private createInstance(workspace: HostWorkspace): Promise<LspInstance> {
     const spec: InstanceSpec = {
       command: this.executable,
       args: this.config.args,
@@ -345,8 +351,9 @@ class LocalLspProvider implements LspProvider {
       maxStderrBytes: this.config.maxStderrBytes,
       shutdownTimeoutMs: this.config.shutdownTimeoutMs,
       killGraceMs: this.config.killGraceMs,
+      signal: this.lifetime.signal,
     }
-    return new LspInstance(spec, this.spawner)
+    return LspInstance.create(spec, this.spawner)
   }
 
   /** Dispose every live instance and block further queries. */

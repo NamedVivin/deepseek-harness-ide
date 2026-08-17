@@ -68,8 +68,6 @@ export class SandboxPwshExecutor extends PwshLocalExecutor {
     enforcement: SandboxEnforcement
     denialSignatures: readonly string[]
     runnerFailureRules: readonly RunnerFailureRule[]
-    runnerProgram: string | undefined
-    workdir: string
   }>()
 
   constructor(ctx: Context, config: Config) {
@@ -121,47 +119,42 @@ export class SandboxPwshExecutor extends PwshLocalExecutor {
     return { ...result, sandbox: { mode, denied: classifyDenial(result, confined.denialSignatures), enforcement: confined.enforcement } }
   }
 
-  override start(spec: ShellExecSpec): ShellProcess {
+  override async start(spec: ShellExecSpec): Promise<ShellProcess> {
     const policy = spec.sandboxPolicy as SandboxExecutionPolicy
     const { mode } = policy
     if (mode === 'danger-full-access') return super.start(spec)
-    // Once startArgv returns, install facts synchronously; promise settlement
-    // cannot run before start() returns.
     const confined = this.confine(spec, { ...policy, mode })
-    let proc: ShellProcess
+    const facts = {
+      mode,
+      enforcement: confined.enforcement,
+      denialSignatures: confined.denialSignatures,
+      runnerFailureRules: confined.runnerFailureRules,
+    }
     try {
-      proc = this.startArgv(spec, confined.argv)
+      return await this.startArgv(spec, confined.argv, (proc) => {
+        this.processFacts.set(proc, facts)
+      })
     } catch (error) {
       if (isRunnerSpawnFailure(error, confined.argv[0], spec.workdir)) {
         throw new SandboxUnavailableError(mode, String(error))
       }
       throw error
     }
-    const { enforcement, denialSignatures, runnerFailureRules } = confined
-    this.processFacts.set(proc, {
-      mode,
-      enforcement,
-      denialSignatures,
-      runnerFailureRules,
-      runnerProgram: confined.argv[0],
-      workdir: spec.workdir,
-    })
-    return proc
   }
 
   /**
    * Stamp per-process sandbox facts before `done` settles. Full-access
    * processes have no facts; signal deaths are not denials.
    */
-  protected override onProcessDone(proc: ShellProcess, stderr: string, spawnFailed: boolean, spawnError?: unknown): void {
+  protected override onProcessDone(proc: ShellProcess, stderr: string, observationFailed: boolean, observationError?: unknown): void {
     const facts = this.processFacts.get(proc)
     if (facts !== undefined) {
       this.processFacts.delete(proc)
-      // A rejected spawn never started the confined launch. Otherwise runner
-      // failure outranks denial because its diagnostics may contain denial terms.
-      const runnerFailed = spawnFailed
-        ? isRunnerSpawnFailure(spawnError, facts.runnerProgram, facts.workdir)
-        : classifyRunnerFailure(proc.exitCode, stderr, facts.runnerFailureRules) !== undefined
+      // A post-creation observation failure carries no trustworthy command
+      // outcome. Otherwise runner failure outranks denial because its
+      // diagnostics may contain denial terms.
+      const runnerFailed = !observationFailed
+        && classifyRunnerFailure(proc.exitCode, stderr, facts.runnerFailureRules) !== undefined
       proc.sandbox = {
         mode: facts.mode,
         denied: !runnerFailed && matchesSignature(proc.exitCode, stderr, facts.denialSignatures),
@@ -169,7 +162,7 @@ export class SandboxPwshExecutor extends PwshLocalExecutor {
         ...(runnerFailed ? { runnerFailed } : {}),
       }
     }
-    super.onProcessDone(proc, stderr, spawnFailed, spawnError)
+    super.onProcessDone(proc, stderr, observationFailed, observationError)
   }
 
   /**

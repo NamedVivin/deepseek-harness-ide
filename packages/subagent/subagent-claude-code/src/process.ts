@@ -44,6 +44,7 @@ export function sdkEnvironmentOverlay(
  * @param options - command, arguments, workspace, environment, and forwarded signal from the SDK.
  * @param graceMs - process-tree termination grace.
  * @param platform - host platform selecting the Windows batch-shim boundary.
+ * @param signal - process-setup cancellation; defaults to the SDK transport's forwarded signal.
  * @returns the fully explicit shared subprocess request.
  * @remarks The batch-shim path quotes only the resolved executable. The pinned SDK
  * supplies fixed flag arguments without cmd metacharacters; cmd reparses that tail.
@@ -52,6 +53,7 @@ export function claudeSpawnSpec(
   options: SpawnOptions,
   graceMs: number,
   platform: NodeJS.Platform = process.platform,
+  signal: AbortSignal = options.signal,
 ): SubprocessSpawnSpec {
   if (options.cwd === undefined || options.cwd.length === 0) {
     throw new Error('subagent-claude-code: SDK spawn request omitted its workspace')
@@ -68,7 +70,7 @@ export function claudeSpawnSpec(
     cwd: options.cwd,
     stdio: { stdin: 'pipe', stdout: 'pipe', stderr: 'inherit' },
     graceMs,
-    signal: options.signal,
+    signal,
     env,
   }
 }
@@ -93,8 +95,8 @@ export class ManagedClaudeCodeProcess implements SpawnedProcess {
     this.stdin = child.stdin as NonNullable<SubprocessHandle['stdin']>
     this.stdout = child.stdout as NonNullable<SubprocessHandle['stdout']>
     // EventEmitter gives `error` special throw semantics without a listener.
-    // The SDK attaches its listener synchronously after custom spawn returns,
-    // while this no-op also contains an already-rejected spawn handle.
+    // The SDK attaches its listener synchronously after custom spawn returns;
+    // this no-op covers a post-creation observation failure racing that call.
     this.events.on('error', () => {})
     void child.done.then(
       (outcome) => {

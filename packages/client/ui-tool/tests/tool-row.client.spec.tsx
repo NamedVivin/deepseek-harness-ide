@@ -257,14 +257,22 @@ describe('ToolRow', () => {
   })
 
   it('file rows expand from the row while the path link opens without toggling', () => {
-    const open = vi.fn()
+    const open = vi.fn(async () => {})
     const view = render(
-      <ToolRow {...rowProps} variant="read" title="Read" summary="src/a.ts" filePath="src/a.ts" onOpenFile={open} />,
+      <ToolRow
+        {...rowProps}
+        variant="read"
+        title="Read"
+        summary="src/a.ts"
+        filePath="src/a.ts"
+        fileLocation={{ path: 'src/a.ts', line: 9 }}
+        onOpenFile={open}
+      />,
     )
     const row = view.getByRole('button', { name: /Read/ })
     // Path click opens the file and leaves the row collapsed.
     fireEvent.click(view.getByText('src/a.ts'))
-    expect(open).toHaveBeenCalledWith('src/a.ts')
+    expect(open).toHaveBeenCalledWith({ path: 'src/a.ts', line: 9 })
     expect(row.getAttribute('aria-expanded')).toBe('false')
     // Row click (outside the link) expands the args body.
     fireEvent.click(row)
@@ -274,7 +282,14 @@ describe('ToolRow', () => {
 
   it('a file path without onOpenFile renders a plain summary on an expandable row', () => {
     const view = render(
-      <ToolRow {...rowProps} variant="write" title="Write" summary="作文.md" filePath="作文.md" />,
+      <ToolRow
+        {...rowProps}
+        variant="write"
+        title="Write"
+        summary="作文.md"
+        filePath="作文.md"
+        fileLocation={{ path: '作文.md' }}
+      />,
     )
     expect(view.container.querySelector('button')).toBeNull()
     const row = view.getByRole('button')
@@ -376,7 +391,7 @@ describe('ToolRow', () => {
 
 describe('GenericToolCard', () => {
   const props = (toolName: string, block: RunningToolCall | ToolResultNode): GenericToolCardProps => ({
-    callId: 'c1', toolName, block, openFile: vi.fn(), t,
+    callId: 'c1', toolName, block, openFile: vi.fn(async () => {}), t,
   })
 
   it('renders the classified variant row from the frozen slice', () => {
@@ -430,10 +445,16 @@ describe('GenericToolCard', () => {
   })
 
   it('file-path summary click reaches openFile; bash summary does not', () => {
-    const file = props('read', running({ name: 'read', argsRaw: '{"path":"src/x.ts"}' }))
+    const file = props('read', running({
+      name: 'read',
+      argsRaw: '{"path":"src/x.ts"}',
+      callView: {
+        card: 'generic', title: 'Read src/x.ts', kind: 'read', locations: [{ path: 'src/x.ts', line: 4 }],
+      },
+    }))
     const fileView = render(<GenericToolCard {...file} />)
     fireEvent.click(fileView.getByText('src/x.ts'))
-    expect(file.openFile).toHaveBeenCalledWith('src/x.ts')
+    expect(file.openFile).toHaveBeenCalledWith({ path: 'src/x.ts', line: 4 })
 
     const bash = props('bash', result())
     const bashView = render(<GenericToolCard {...bash} />)

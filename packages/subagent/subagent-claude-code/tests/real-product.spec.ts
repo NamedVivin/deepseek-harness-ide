@@ -171,9 +171,9 @@ async function realHarness(behavior: MessagesBehavior): Promise<{
   const handles: SubprocessHandle[] = []
   const spawnSpecs: SubprocessSpawnSpec[] = []
   const spawn = ctx.subprocess.spawn.bind(ctx.subprocess)
-  vi.spyOn(ctx.subprocess, 'spawn').mockImplementation((spec) => {
+  vi.spyOn(ctx.subprocess, 'spawn').mockImplementation(async (spec) => {
     spawnSpecs.push(spec)
-    const handle = spawn(spec)
+    const handle = await spawn(spec)
     handles.push(handle)
     return handle
   })
@@ -231,6 +231,8 @@ describe('real Claude Agent SDK 0.3.220 and its distributed Claude Code 2.1.220 
     expect(version.stdout.trim()).toBe('2.1.220 (Claude Code)')
 
     const run = await startRequest(harness, task)
+    expect(harness.spawnSpecs).toHaveLength(1)
+    expect(harness.handles).toHaveLength(1)
     await expect(run.result).resolves.toEqual({
       output: [{ type: 'text', text: sentinel }],
       stopReason: 'completed',

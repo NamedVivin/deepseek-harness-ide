@@ -3,6 +3,8 @@
  * between the independently implemented skeleton and chat domains; `apply.ts`
  * owns their slot assembly.
  */
+export type {} from './file-opener.ts'
+
 export type {} from './conversation-nodes/assistant.ts'
 export type {} from './conversation-nodes/command.ts'
 export type {} from './conversation-nodes/compaction.ts'

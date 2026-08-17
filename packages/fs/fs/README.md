@@ -17,7 +17,7 @@ This package owns the Service Definition and provider contract layer of the four
 
 ## Service API (`ctx.fs`)
 
-A backend subclasses `FileSystem` and implements twelve primitives.
+A backend subclasses `FileSystem` and implements thirteen primitives.
 
 | Member | Semantics |
 |---|---|
@@ -31,6 +31,7 @@ A backend subclasses `FileSystem` and implements twelve primitives.
 | `streamText(target, signal?)` | Stream the same text as decoded chunks for large files (cross-chunk UTF-8 decoding stays here); consumers that need a byte ceiling enforce it while consuming the stream. |
 | `readBytes(target, signal, maxBytes)` | Read a complete regular file as raw bytes with no decoding or binary rejection. `maxBytes` is required and bounds the complete content at this seam: a known or discovered overflow fails with `FS_TOO_LARGE` instead of truncating or buffering without a bound. |
 | `listDir(target, signal?)` | List direct directory children in stable name order. Returns entry names, entry types, resolved child targets, and cheap metadata (`version`/file `size` when available); never reads file contents. Missing targets throw `FS_NOT_FOUND`, non-directories throw `FS_NOT_DIRECTORY`, permission failures throw `FS_PERMISSION_DENIED`, and other backend I/O failures throw `FS_IO_ERROR`. Broken/disappeared children may be returned as `other` without metadata; child permission/IO failures fail the whole listing with the same structured codes. |
+| `listDirBounded(target, { maxEntries }, signal?)` | Return the same one-level entry form only when the complete directory contains at most `maxEntries` children. Every provider stops after observing child `maxEntries + 1` and throws `FS_TOO_LARGE`; it never delegates to `listDir` or materializes the complete oversized directory. Successful complete results are name-sorted. |
 | `writeText(target, content, expected?, signal?)` | Atomic create/replace. `expected` is OPTIONAL: omit ⇒ unconditional create-or-overwrite; supply an `FsWriteIntent` (`createIfAbsent`/`replaceIfVersion`) to guard. `createIfAbsent` must perform a no-replace publication so a creator racing the initial probe is preserved. |
 | `editText(target, edit, expected?, signal?)` | Literal edit. `expected` is OPTIONAL: omit ⇒ unconditional edit of the current content; supply `{ version }` to guard (verified BEFORE matching). A missing target reports `FS_STALE_VERSION` either way. Applies and writes atomically — one mutation critical section. |
 
@@ -61,6 +62,6 @@ No direct invalidation; the named consumer owns any request-prefix changes.
 ## Known Limitations and Deferred Work
 
 - **Text-only mutations by contract** — text reads and both mutations reject binary/non-UTF-8 content with `FS_NOT_TEXT`; `readBytes` is the one raw-byte primitive, and binary-safe mutations remain a deliberate deferral of [the tool-schemas Agent Note](../../../.agents/notes/implemented/feature/2026-06-17-filesystem-tool-schemas.md).
-- **Twelve primitives only** — no delete, rename/move, copy, or watch; `listDir` is single-level, with recursion, globbing, pagination, and search out of scope per [the directory-listing Agent Note](../../../.agents/notes/archived/architecture/2026-07-03-filesystem-directory-listing-seam.md).
+- **Thirteen primitives only** — no delete, rename/move, copy, or watch; both listing methods are single-level, and the bounded form returns a complete level or fails rather than paginating. Recursion, globbing, pagination, and search remain out of scope per [the directory-listing Agent Note](../../../.agents/notes/archived/architecture/2026-07-03-filesystem-directory-listing-seam.md).
 - **No IO deadline** — the seam arms no timeout; cancellation is a best-effort optional `AbortSignal` per primitive (the deliberate [fs-family stance](../README.md)).
 - **Resolve-then-operate costs a remote backend two round-trips per tool call** — folding or caching resolution is left to such a backend.

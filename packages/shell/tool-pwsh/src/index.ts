@@ -379,12 +379,12 @@ export function apply(ctx: Context, config: Config = {}): void {
           throw error
         }
         // Task preflight finishes before the starter can spawn a process.
-        const id = jobs.start({
+        const id = await jobs.start({
           kind: 'pwsh',
           label: args.command,
           ...exec.agent ? { owner: exec.agent } : {},
-          run: () => {
-            const proc = ctx.shell.start(ctx.shell.resolve(request))
+          run: async (signal) => {
+            const proc = await ctx.shell.start(ctx.shell.resolve({ ...request, signal }))
             return {
               cancel: () => void proc.kill(),
               done: proc.done.then(() => processOutcome(proc)),

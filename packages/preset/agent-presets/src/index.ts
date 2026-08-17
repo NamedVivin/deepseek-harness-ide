@@ -31,6 +31,12 @@ import { settingsNamespace, type SettingsScope, type default as SettingsService 
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
 import { discoverPresets, USER_PRESET_DIR } from './discovery.ts'
 import { copyComposition, deleteComposition, readComposition } from './authoring.ts'
+import {
+  PresetAdmissionRuntime,
+  type PresetAdmissionContribution,
+  type PresetAdmissionOperation,
+  type PresetAdmissionProof,
+} from './admission.ts'
 import { mountPreset, serviceForAgent, standingMountFor } from './mount.ts'
 import { PresetExistsError } from './authoring.ts'
 import { PresetMountError, UnknownPresetError, type AgentPreset, type Config, type PresetRoot } from './preset.ts'
@@ -55,13 +61,24 @@ export {
   METADATA_FILE, readPresetMetadata, renderPresetMetadata, type PresetMetadata,
 } from './metadata.ts'
 export {
-  inactiveRows, leakedServices, livePresetMounts, mountPreset, serviceForAgent, standingMountFor,
+  inactiveRows, leakedServices, livePresetMounts, serviceForAgent, standingMountFor,
   type JoinedPresetMount, type PresetMount,
 } from './mount.ts'
 export {
   copyComposition, deleteComposition, InvalidPresetIdError, PresetExistsError,
   PresetNotWritableError, readComposition, writableRoot,
 } from './authoring.ts'
+export {
+  PresetAdmissionError,
+  PresetAdmissionProofError,
+  type PresetAdmissionContribution,
+  type PresetAdmissionErrorMetadata,
+  type PresetAdmissionOperation,
+  type PresetAdmissionProof,
+  type PresetAdmissionProofFailure,
+  type PresetAdmissionRefusal,
+  type PresetAdmissionRequest,
+} from './admission.ts'
 export { resolveSessionPreset, type PresetBearingSession } from './session.ts'
 export { PresetMountError, UnknownPresetError } from './preset.ts'
 export type { AgentPreset, Config, PresetRoot, PresetTrust } from './preset.ts'
@@ -126,6 +143,9 @@ export class AgentPresets extends Service {
    * off the untraced original (the `jobs-local` selfCtx precedent).
    */
   private readonly selfCtx: Context
+
+  /** Live admission contributions and the policy generation they define. */
+  private readonly admission = new PresetAdmissionRuntime()
 
   constructor(ctx: Context, public config: Config) {
     super(ctx, 'agentPresets')
@@ -193,6 +213,24 @@ export class AgentPresets extends Service {
   }
 
   /**
+   * Contribute synchronous policy to every preset-bearing service operation.
+   *
+   * With no contribution every operation is admitted. Registration and
+   * disposal each start a new policy generation: existing agents keep their
+   * mounted generation, while new mounts and inherited compositions must
+   * obtain authority from the current contribution set.
+   * @param contribution - operation-aware admission policy.
+   * @returns the exact Cordis effect disposer for this contribution.
+   */
+  registerAdmission(contribution: PresetAdmissionContribution): () => void {
+    // oxlint-disable-next-line typescript/no-misused-promises -- synchronous cleanup; direct return preserves disposer identity
+    return this.ctx.effect(
+      () => this.admission.register(contribution),
+      'agentPresets.registerAdmission()',
+    )
+  }
+
+  /**
    * Every preset the configured roots currently supply.
    * @returns the presets, first-root-wins per id.
    */
@@ -208,16 +246,38 @@ export class AgentPresets extends Service {
    * through {@link resolveMountable}.
    * @param id - the preset id, or `undefined` for {@link defaultId}.
    * @returns the resolved preset.
-   * @throws when no configured root supplies that id.
+   * @throws when admission refuses the operation or no configured root supplies that id.
    */
   async resolve(id?: string): Promise<AgentPreset> {
+    const admitted = await this.resolveFor('resolve', id)
+    this.admission.consume(admitted.proof, admitted.operation, admitted.preset.id)
+    return admitted.preset
+  }
+
+  /**
+   * Resolve one preset under authority for the named public operation.
+   * @param operation - public entry point requesting the preset.
+   * @param id - preset id, or `undefined` for {@link defaultId}.
+   * @returns the resolved preset and its single-use operation authority.
+   */
+  private async resolveFor(
+    operation: Exclude<PresetAdmissionOperation, 'composeFrom'>,
+    id?: string,
+  ): Promise<AdmittedPreset> {
     const wanted = id ?? this.defaultId
-    const presets = await this.list()
-    const found = presets.find(preset => preset.id === wanted)
-    if (found === undefined) {
-      throw new UnknownPresetError(wanted, presets.map(preset => preset.id))
+    const proof = this.admission.authorize(operation, wanted)
+    try {
+      const presets = await this.list()
+      this.admission.assertIssued(proof, operation, wanted)
+      const preset = presets.find(candidate => candidate.id === wanted)
+      if (preset === undefined) {
+        throw new UnknownPresetError(wanted, presets.map(candidate => candidate.id))
+      }
+      return { operation, preset, proof }
+    } catch (error) {
+      this.admission.retire(proof)
+      throw error
     }
-    return found
   }
 
   /**
@@ -226,16 +286,21 @@ export class AgentPresets extends Service {
    * the loader keeps the answer the same for every unloadable shape — ghost
    * directory, unparsable YAML, rowless list — and spends no mount attempt
    * on a composition discovery already read as unusable.
+   * @param operation - mount-like public entry point requesting the preset.
    * @param id - the preset id, or `undefined` for {@link defaultId}.
-   * @returns the resolved, mountable preset.
-   * @throws when the preset is unknown or discovery reports it broken.
+   * @returns the resolved preset and its single-use operation authority.
+   * @throws when admission refuses, the preset is unknown, or discovery reports it broken.
    */
-  private async resolveMountable(id?: string): Promise<AgentPreset> {
-    const preset = await this.resolve(id)
-    if (preset.broken !== undefined) {
-      throw new PresetMountError(preset.id, preset.broken)
+  private async resolveMountable(
+    operation: Exclude<PresetAdmissionOperation, 'resolve' | 'composeFrom'>,
+    id?: string,
+  ): Promise<AdmittedPreset> {
+    const admitted = await this.resolveFor(operation, id)
+    if (admitted.preset.broken !== undefined) {
+      this.admission.retire(admitted.proof)
+      throw new PresetMountError(admitted.preset.id, admitted.preset.broken)
     }
-    return preset
+    return admitted
   }
 
   /**
@@ -270,21 +335,22 @@ export class AgentPresets extends Service {
    * @param agentCtx - the agent's scope context.
    * @param id - the preset id, or `undefined` for {@link defaultId}.
    * @returns the preset that was composed, for the caller to record.
-   * @throws when the preset is unknown or its composition is unusable.
+   * @throws when admission refuses, the preset is unknown, or its composition is unusable.
    */
   async mount(agentCtx: Context, id?: string): Promise<AgentPreset> {
     const agentKey = scopeOf(agentCtx)
     if (agentKey === undefined) {
       throw new Error('agent-presets: refusing to compose an unscoped context; the scope key is what joins an agent to its preset')
     }
-    const preset = await this.resolveMountable(id)
-    const standing = await this.ensureStanding(preset)
+    const admitted = await this.resolveMountable('mount', id)
+    const standing = await this.ensureStanding(admitted)
+    this.admission.assertCurrentGeneration(standing.proof, admitted.preset.id)
     // The one bind of this agent's ancestry. The binding is the only re-link
     // authority, held privately so nothing outside this roster can move a
     // composed agent to another preset; a later recompose layer re-links
     // through it under the caller-owned blank-session contract.
     this.bindings.set(agentKey, bindScopeParent(agentKey, standing.key))
-    return preset
+    return admitted.preset
   }
 
   /**
@@ -299,11 +365,11 @@ export class AgentPresets extends Service {
    * parent's history was produced under (and a preset deleted since would fail
    * the child outright while its parent keeps running).
    *
-   * Synchronous, and with no composition failure mode of its own — it reads no
-   * roster, mounts nothing, and touches no file — which is what lets a child
-   * creation window use it: the two in-process subagent drivers compose their
-   * children inside a synchronous `setup`. It still rejects a caller error, as
-   * the `@throws` below record.
+   * Synchronous because it reads no roster, mounts nothing, and touches no
+   * file, which lets a child creation window use it: the two in-process
+   * subagent drivers compose their children inside a synchronous `setup`.
+   * Admission remains synchronous too, and the inherited generation must
+   * carry authority from this roster's current policy.
    *
    * A parent that joined no preset — a rosterless deployment — yields no join
    * and no error: there, the model-facing rows sit in the host composition and
@@ -311,7 +377,8 @@ export class AgentPresets extends Service {
    * @param agentCtx - the joining agent's scope context.
    * @param parentCtx - the scope context of the agent whose composition to join.
    * @returns the preset id joined, or undefined when the parent joined none.
-   * @throws when `agentCtx` carries no scope, or has already joined a preset.
+   * @throws when admission refuses, the parent's generation is obsolete or
+   * foreign, `agentCtx` carries no scope, or the agent already joined a preset.
    */
   composeFrom(agentCtx: Context, parentCtx: Context): string | undefined {
     const agentKey = scopeOf(agentCtx)
@@ -320,8 +387,16 @@ export class AgentPresets extends Service {
     }
     const standing = standingMountFor(parentCtx)
     if (standing === undefined) return undefined
-    this.bindings.set(agentKey, bindScopeParent(agentKey, standing.key))
-    return standing.presetId
+    const proof = this.admission.authorize('composeFrom', standing.presetId)
+    try {
+      this.admission.assertCurrentGeneration(standing.proof, standing.presetId)
+      this.admission.consume(proof, 'composeFrom', standing.presetId)
+      this.bindings.set(agentKey, bindScopeParent(agentKey, standing.key))
+      return standing.presetId
+    } catch (error) {
+      this.admission.retire(proof)
+      throw error
+    }
   }
 
   /**
@@ -453,22 +528,23 @@ export class AgentPresets extends Service {
    * @param agentCtx - the agent's scope context.
    * @param id - the preset to compose the agent from instead.
    * @returns the preset now installed.
-   * @throws when the preset is unknown or its composition is unusable.
+   * @throws when admission refuses, the preset is unknown, or its composition is unusable.
    */
   async recompose(agentCtx: Context, id: string): Promise<AgentPreset> {
     const agentKey = scopeOf(agentCtx)
     if (agentKey === undefined) {
       throw new Error('agent-presets: refusing to recompose an unscoped context')
     }
-    const preset = await this.resolveMountable(id)
-    const standing = await this.ensureStanding(preset)
+    const admitted = await this.resolveMountable('recompose', id)
+    const standing = await this.ensureStanding(admitted)
+    this.admission.assertCurrentGeneration(standing.proof, admitted.preset.id)
     const binding = this.bindings.get(agentKey)
     if (binding === undefined) {
       this.bindings.set(agentKey, bindScopeParent(agentKey, standing.key))
     } else {
       binding.rebind(standing.key)
     }
-    return preset
+    return admitted.preset
   }
 
   /**
@@ -480,25 +556,43 @@ export class AgentPresets extends Service {
    * agent, no session, and no turn.
    * @param id - the preset id, or `undefined` for {@link defaultId}.
    * @returns the standing scope key readers pass as a registry view scope.
-   * @throws when the preset is unknown or its composition is unusable.
+   * @throws when admission refuses, the preset is unknown, or its composition is unusable.
    */
   async standingKeyFor(id?: string): Promise<ScopeKey> {
-    const preset = await this.resolveMountable(id)
-    return (await this.ensureStanding(preset)).key
+    const admitted = await this.resolveMountable('standingKeyFor', id)
+    const standing = await this.ensureStanding(admitted)
+    this.admission.assertCurrentGeneration(standing.proof, admitted.preset.id)
+    return standing.key
   }
 
-  /** Resolve (or create, single-flight) the standing mount of one preset. */
-  private async ensureStanding(preset: AgentPreset): Promise<StandingMount> {
+  /**
+   * Resolve or create the single-flight standing mount for an admitted operation.
+   * @param admitted - resolved preset and current single-use operation authority.
+   * @returns the current standing generation, whose proof is either newly
+   * claimed from the operation or separately validated before reuse.
+   */
+  private async ensureStanding(admitted: AdmittedPreset): Promise<StandingMount> {
+    const { operation, preset, proof } = admitted
+    this.admission.assertIssued(proof, operation, preset.id)
     const pending = this.standing.get(preset.id)
     if (pending !== undefined) {
       const mounted = await pending
+      this.admission.assertIssued(proof, operation, preset.id)
+      if (!this.admission.isCurrentGeneration(mounted.proof, preset.id)) {
+        if (this.standing.get(preset.id) === pending) this.standing.delete(preset.id)
+        return await this.ensureStanding(admitted)
+      }
       // Files are the only composition editor (authoring is copy/delete), so
       // the stamp is what notices an edit: a changed file starts the next
       // generation here, for this and later sessions. An unreadable stamp
       // serves the current generation — a mount must survive its file
       // disappearing, and failing the session over a stat would not.
       const current = await compositionStamp(preset.path)
-      if (current === undefined || sameStamp(mounted.stamp, current)) return mounted
+      this.admission.assertIssued(proof, operation, preset.id)
+      if (current === undefined || sameStamp(mounted.stamp, current)) {
+        this.admission.consume(proof, operation, preset.id)
+        return mounted
+      }
       // TODO: reclaim the superseded generation once the last agent joined to
       // it is gone. The subtree is not inert — `dsh-skill-filesystem` watches its
       // roots — and the settings-page authoring flow turns "a composition
@@ -508,7 +602,7 @@ export class AgentPresets extends Service {
       // Guarded delete: a caller that raced this one may have already started
       // the next generation, and dropping THAT pointer would fork a third.
       if (this.standing.get(preset.id) === pending) this.standing.delete(preset.id)
-      return this.ensureStanding(preset)
+      return await this.ensureStanding(admitted)
     }
     const created = (async (): Promise<StandingMount> => {
       const key: ScopeKey = { agentPreset: preset.id }
@@ -521,8 +615,9 @@ export class AgentPresets extends Service {
         if (stamp === undefined) {
           throw new PresetMountError(preset.id, `composition file is unreadable: ${preset.path}`)
         }
-        await mountPreset(scope.ctx, preset)
-        return { key, scope, stamp }
+        await mountPreset(scope.ctx, preset, proof)
+        this.admission.assertCurrentGeneration(proof, preset.id)
+        return Object.freeze({ key, scope, stamp, proof })
       } catch (error) {
         this.standing.delete(preset.id)
         await scope.dispose()
@@ -559,6 +654,16 @@ function sameStamp(a: CompositionStamp, b: CompositionStamp): boolean {
   return a.mtimeMs === b.mtimeMs && a.size === b.size
 }
 
+/** One resolved preset plus single-use authority for its public operation. */
+interface AdmittedPreset {
+  /** Public service operation whose contributions admitted this preset. */
+  readonly operation: Exclude<PresetAdmissionOperation, 'composeFrom'>
+  /** Preset resolved after admission. */
+  readonly preset: AgentPreset
+  /** Runtime-only authority issued by the current policy generation. */
+  readonly proof: PresetAdmissionProof
+}
+
 /** One preset's standing composition. */
 interface StandingMount {
   /** Scope key agents are parented to; also the mount's registration scope. */
@@ -567,6 +672,8 @@ interface StandingMount {
   readonly scope: Scope
   /** Stamp of the composition file this generation was mounted from. */
   readonly stamp: CompositionStamp
+  /** Authority shared with the low-level mount record for this generation. */
+  readonly proof: PresetAdmissionProof
 }
 
 export default AgentPresets

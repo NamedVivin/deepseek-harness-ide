@@ -306,19 +306,19 @@ describe('dsh-agent-spine-demo bundle', () => {
       workspaceContext: false,
     })
     let settle!: (outcome: { status: 'killed' }) => void
-    ctx.jobs.start({
+    await ctx.jobs.start({
       kind: 'probe',
       label: 'hold configured slot',
-      run: () => ({
+      run: async () => ({
         cancel: () => { settle({ status: 'killed' }) },
         done: new Promise((resolve) => { settle = resolve }),
       }),
     })
-    expect(() => ctx.jobs.start({
+    await expect(ctx.jobs.start({
       kind: 'probe',
       label: 'blocked configured task',
-      run: () => ({ cancel: () => {}, done: Promise.resolve({ status: 'completed' }) }),
-    })).toThrow('(limit: 1)')
+      run: async () => ({ cancel: () => {}, done: Promise.resolve({ status: 'completed' }) }),
+    })).rejects.toThrow('(limit: 1)')
     await ctx.fiber.dispose()
   })
 
@@ -677,10 +677,10 @@ describe('dsh-agent-spine-demo bundle', () => {
     expect(Object.keys((bash!.parameters as { properties: Record<string, unknown> }).properties))
       .not.toContain('run_in_background')
 
-    const id = ctx.jobs.start({
+    const id = await ctx.jobs.start({
       kind: 'probe',
       label: 'config forwarding probe',
-      run: () => ({ cancel: () => {}, done: Promise.resolve({ status: 'completed' }) }),
+      run: async () => ({ cancel: () => {}, done: Promise.resolve({ status: 'completed' }) }),
     })
     const wait = vi.spyOn(ctx.jobs, 'wait')
     await ctx.tools.execute({

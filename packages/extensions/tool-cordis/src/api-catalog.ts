@@ -136,6 +136,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     description: 'Registry over the deployment\'s agent presets.\n\nDiscovery is unmemoized: `list()` and `resolve()` re-read the roots on every call so a preset authored while the process runs is visible immediately, and a preset deleted underneath a picker disappears from the next read.',
     methods: [
       {
+        signature: 'registerAdmission(contribution: PresetAdmissionContribution): () => void',
+        description: 'Contribute synchronous policy to every preset-bearing service operation.\n\nWith no contribution every operation is admitted. Registration and disposal each start a new policy generation: existing agents keep their mounted generation, while new mounts and inherited compositions must obtain authority from the current contribution set.',
+        parameters: [{ name: 'contribution', description: 'operation-aware admission policy.' }],
+        returns: 'the exact Cordis effect disposer for this contribution.',
+      },
+      {
         signature: 'async list(): Promise<AgentPreset[]>',
         description: 'Every preset the configured roots currently supply.',
         parameters: [],
@@ -146,21 +152,21 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'Resolve one preset by id.\n\nA broken preset resolves — deleting one, reading one, and reporting one all need the row — and the mounting paths refuse it AFTER resolution through resolveMountable.',
         parameters: [{ name: 'id', description: 'the preset id, or `undefined` for {@link defaultId}.' }],
         returns: 'the resolved preset.',
-        throws: ['when no configured root supplies that id.'],
+        throws: ['when admission refuses the operation or no configured root supplies that id.'],
       },
       {
         signature: 'async mount(agentCtx: Context, id?: string): Promise<AgentPreset>',
         description: 'Compose one agent from a preset: ensure the preset\'s standing mount, then parent the agent\'s scope key to it so the mount\'s registrations and listeners cover this agent.\n\nCall from the agent factory\'s `setup(agentCtx)`; a rejection there rolls the agent creation back, so a broken preset never yields a half-composed session.',
         parameters: [{ name: 'agentCtx', description: 'the agent\'s scope context.' }, { name: 'id', description: 'the preset id, or `undefined` for {@link defaultId}.' }],
         returns: 'the preset that was composed, for the caller to record.',
-        throws: ['when the preset is unknown or its composition is unusable.'],
+        throws: ['when admission refuses, the preset is unknown, or its composition is unusable.'],
       },
       {
         signature: 'composeFrom(agentCtx: Context, parentCtx: Context): string | undefined',
-        description: 'Join one agent to the SAME standing composition another already runs on.\n\nThis is how a child agent inherits its parent\'s capabilities. It is a bind, not a mount: the parent\'s generation is already composed, so the child gets that exact instance — the same plugin objects, the same tool registrations, the same prompt sections. Re-resolving the parent\'s preset by id instead would re-read the roster, and a composition file edited since the parent started would hand the child a DIFFERENT generation than the one its parent\'s history was produced under (and a preset deleted since would fail the child outright while its parent keeps running).\n\nSynchronous, and with no composition failure mode of its own — it reads no roster, mounts nothing, and touches no file — which is what lets a child creation window use it: the two in-process subagent drivers compose their children inside a synchronous `setup`. It still rejects a caller error, as the `@throws` below record.\n\nA parent that joined no preset — a rosterless deployment — yields no join and no error: there, the model-facing rows sit in the host composition and the child already sees them through the global layer.',
+        description: 'Join one agent to the SAME standing composition another already runs on.\n\nThis is how a child agent inherits its parent\'s capabilities. It is a bind, not a mount: the parent\'s generation is already composed, so the child gets that exact instance — the same plugin objects, the same tool registrations, the same prompt sections. Re-resolving the parent\'s preset by id instead would re-read the roster, and a composition file edited since the parent started would hand the child a DIFFERENT generation than the one its parent\'s history was produced under (and a preset deleted since would fail the child outright while its parent keeps running).\n\nSynchronous because it reads no roster, mounts nothing, and touches no file, which lets a child creation window use it: the two in-process subagent drivers compose their children inside a synchronous `setup`. Admission remains synchronous too, and the inherited generation must carry authority from this roster\'s current policy.\n\nA parent that joined no preset — a rosterless deployment — yields no join and no error: there, the model-facing rows sit in the host composition and the child already sees them through the global layer.',
         parameters: [{ name: 'agentCtx', description: 'the joining agent\'s scope context.' }, { name: 'parentCtx', description: 'the scope context of the agent whose composition to join.' }],
         returns: 'the preset id joined, or undefined when the parent joined none.',
-        throws: ['when `agentCtx` carries no scope, or has already joined a preset.'],
+        throws: ['when admission refuses, the parent\'s generation is obsolete or foreign, `agentCtx` carries no scope, or the agent already joined a preset.'],
       },
       {
         signature: 'composedPreset(agentCtx: Context): string | undefined',
@@ -198,14 +204,14 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'Re-link one agent to a different preset\'s standing composition.\n\nOnly valid while the agent has produced nothing: swapping tools mid conversation would leave logged tool calls the new composition cannot make. The CALLER owns that check — this method does not read session history.\n\nThe swap is a parent re-link, not an unmount: standing mounts are shared and permanent, so the old composition stays for its other agents and the new one is ensured BEFORE the link moves. An unknown or unusable preset therefore throws with the agent exactly as it was — there is no torn-down state to restore. The re-link runs through the binding this roster kept from the agent\'s mount — dsh-scope\'s only re-link authority. An agent that never composed one has nothing to re-link: the switch is then the agent\'s first bind, exactly a mount.',
         parameters: [{ name: 'agentCtx', description: 'the agent\'s scope context.' }, { name: 'id', description: 'the preset to compose the agent from instead.' }],
         returns: 'the preset now installed.',
-        throws: ['when the preset is unknown or its composition is unusable.'],
+        throws: ['when admission refuses, the preset is unknown, or its composition is unusable.'],
       },
       {
         signature: 'async standingKeyFor(id?: string): Promise<ScopeKey>',
         description: 'The standing scope key of one preset, for a host reader with no agent.\n\nA cold transcript read resolves tool presenters against the composition the session recorded, and the standing mount makes that possible without resuming anything: ensuring the mount composes plugins but starts no agent, no session, and no turn.',
         parameters: [{ name: 'id', description: 'the preset id, or `undefined` for {@link defaultId}.' }],
         returns: 'the standing scope key readers pass as a registry view scope.',
-        throws: ['when the preset is unknown or its composition is unusable.'],
+        throws: ['when admission refuses, the preset is unknown, or its composition is unusable.'],
       },
     ],
   },
@@ -379,9 +385,34 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     ],
   },
   {
+    key: 'clientModuleDelivery',
+    summary: 'Service Definition implemented by Web and desktop module-delivery providers.',
+    description: 'Service Definition implemented by Web and desktop module-delivery providers.',
+    methods: [
+      {
+        signature: 'abstract bundleUrl(id: string, revision: string): string',
+        description: 'Produce the immutable URL advertised for one bundle revision.',
+        parameters: [{ name: 'id', description: 'Client package id.' }, { name: 'revision', description: 'content revision.' }],
+        returns: 'carrier URL placed in the shared boot manifest.',
+      },
+      {
+        signature: 'abstract install(host: ClientModuleDeliveryHost): () => void',
+        description: 'Attach physical delivery to the composed registry.',
+        parameters: [{ name: 'host', description: 'read-only graph and bundle-path source.' }],
+        returns: 'disposer for routes, protocol mapping, or retained state.',
+      },
+      {
+        signature: 'abstract resolveBundleUrl(url: string): string | undefined',
+        description: 'Resolve an exact advertised URL to a bundle path.',
+        parameters: [{ name: 'url', description: 'untrusted physical asset URL.' }],
+        returns: 'the matched bundle path, or undefined when it is not currently advertised.',
+      },
+    ],
+  },
+  {
     key: 'clientModules',
-    summary: 'The web plugin table service: incremental `dsh.client` scan + wire composition + bundle route + index tap.',
-    description: 'The web plugin table service: incremental `dsh.client` scan + wire composition + bundle route + index tap. Construction runs the activation scan synchronously — a malformed declaration or missing bundle among the already-loaded entries aggregates into one loud throw (FAILED fiber; the boot activation audit reports it).',
+    summary: 'Incremental `dsh.client` scan and carrier-neutral wire composition.',
+    description: 'Incremental `dsh.client` scan and carrier-neutral wire composition. Construction runs the activation scan synchronously — a malformed declaration or missing bundle among the already-loaded entries aggregates into one loud throw (FAILED fiber; the boot activation audit reports it).',
     methods: [
       {
         signature: 'graph(): WebBootGraph',
@@ -497,6 +528,31 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     ],
   },
   {
+    key: 'connection',
+    summary: 'Host `ctx.connection` shape consumed by transport-independent adapters.',
+    description: 'Host `ctx.connection` shape consumed by transport-independent adapters.',
+    methods: [
+      {
+        signature: 'readonly rpc: HostConnectionRpc',
+        description: 'Generic RPC channel registry.',
+        parameters: [],
+      },
+    ],
+  },
+  {
+    key: 'connectionTransport',
+    summary: 'Service Definition implemented by the Web and desktop Connection providers.',
+    description: 'Service Definition implemented by the Web and desktop Connection providers.',
+    methods: [
+      {
+        signature: 'abstract install(host: HostConnectionTransportHost): () => void | Promise<void>',
+        description: 'Attach physical routes or IPC handlers to the core router.',
+        parameters: [{ name: 'host', description: 'carrier-neutral request and event owner.' }],
+        returns: 'disposer that reaches transport quiescence.',
+      },
+    ],
+  },
+  {
     key: 'credentials',
     summary: 'Abstract credential service.',
     description: 'Abstract credential service. Providers implement the four operations over their source layers; one seam-wide rule binds them all: an empty stored value is absent everywhere — `resolve` skips it, `describe` reports it unconfigured — so a blank never masquerades as a configured secret.',
@@ -522,6 +578,19 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         signature: 'abstract unset(ref: CredentialRef): Promise<void>',
         description: 'Remove one reference from the provider-managed writable source; removing an absent reference is a no-op. Rejects while a read-only source shadows the reference, like set.',
         parameters: [{ name: 'ref', description: 'the reference to remove.' }],
+      },
+    ],
+  },
+  {
+    key: 'desktopHostBridge',
+    summary: 'Sidecar-to-Electron main capability service with a closed method map.',
+    description: 'Sidecar-to-Electron main capability service with a closed method map.',
+    methods: [
+      {
+        signature: 'request<K extends keyof HostInitiatedMethodMap>( method: K, payload: HostInitiatedRequest<K>, signal?: AbortSignal, ): Promise<HostInitiatedResponse<K>>',
+        description: 'Invoke one Electron-main capability.',
+        parameters: [{ name: 'method', description: 'closed Host-initiated method name.' }, { name: 'payload', description: 'method-derived request payload.' }, { name: 'signal', description: 'optional caller cancellation propagated to main.' }],
+        returns: 'method-derived response after IPC validation.',
       },
     ],
   },
@@ -628,6 +697,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'one entry per direct child, in stable name order.',
       },
       {
+        signature: 'abstract listDirBounded( target: FsTarget, options: { maxEntries: number }, signal?: AbortSignal, ): Promise<FsDirEntry[]>',
+        description: 'List a complete directory only when it contains at most `maxEntries` direct children. Providers stop after observing `maxEntries + 1` children and fail with `FS_TOO_LARGE`; they must not delegate to listDir or materialize the complete oversized directory. A successful result has the same metadata and stable name order as listDir.',
+        parameters: [{ name: 'target', description: 'the resolved directory target.' }, { name: 'options', description: 'the inclusive complete-result entry limit.' }, { name: 'signal', description: 'aborts the listing.' }],
+        returns: 'every direct child in stable name order when the directory fits.',
+      },
+      {
         signature: 'abstract writeText( target: FsTarget, content: string, expected?: FsWriteIntent, signal?: AbortSignal, sandboxPolicy?: SandboxExecutionPolicy, ): Promise<FsWriteOutcome>',
         description: 'Atomically create or replace UTF-8 text. `expected` guards intent and staleness; omission allows unconditional overwrite.',
         parameters: [{ name: 'target', description: 'the resolved target to write.' }, { name: 'content', description: 'the full new file content.' }, { name: 'expected', description: 'the write intent guarding the write; omit for unconditional.' }, { name: 'signal', description: 'aborts before atomic publication takes effect.' }, { name: 'sandboxPolicy', description: 'the per-call mode and workspace root this write runs under; a sandboxing backend fences the write by it, the bare backend ignores it. Omit to leave the backend its own default.' }],
@@ -728,10 +803,10 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     description: 'Abstract background job registry. Subclass, implement the abstract methods, and load the subclass as a plugin — it registers as `ctx.jobs` (one implementation per context; loading a second throws, which is cordis\' standard duplicate-service behavior).\n\nImplementations must honor these semantics:\n\n- Registrations outlive producer and controller fibers. Owner and service disposal cancel live work and await compliant producers; a throwing teardown cancel force-fails only the record. Teardown cancellation also marks the record reported, because a record its owner is being destroyed for has no reader left.\n- Owned-job access is fenced by the owner\'s session id. Ids are predictable, so authorization — not secrecy — is the boundary.\n- Settlement is first-wins: one terminal record, released waiters, and one round of contained listener notification, even against a late producer outcome. Completion is announced last, after the record is committed and every other observer of the settlement has seen it, because a reporter may open a model turn synchronously.\n- start refuses work while no attached job controller serves the spec\'s owner, so a producer cannot start work that owner cannot collect or stop. One registry serves every composition in the process, so this question — and completion-listener delivery — is owner-relative rather than process-wide: registrations made from an unscoped context serve every owner, and registrations made under an agent composition\'s scope serve exactly the agents composed under it.',
     methods: [
       {
-        signature: 'abstract start(spec: JobStart): JobId',
-        description: 'Preflight access, validation, owner cleanup, and implementation-owned admission before starting and atomically registering work. Any preflight rejection leaves no job id or execution resource. A throwing starter leaves nothing registered; after it returns, registration cannot fail. Settlement records the outcome, notifies listeners, and releases waiters.',
-        parameters: [{ name: 'spec', description: 'job identity, owner, and synchronous starter.' }],
-        returns: 'the registry-issued `<kind>-N` id.',
+        signature: 'abstract start(spec: JobStart): Promise<JobId>',
+        description: 'Preflight access, validation, owner cleanup, and implementation-owned admission before starting and atomically registering work. Capacity is reserved across the awaited starter. Owner or service teardown aborts and joins an unpublished start; a starter rejection leaves no record. After the starter resolves, registration either commits or cancels and joins the ready resource before rejecting. Settlement records the outcome, notifies listeners, and releases waiters.',
+        parameters: [{ name: 'spec', description: 'job identity, owner, and asynchronous starter.' }],
+        returns: 'the registry-issued `<kind>-N` id after registration commits.',
       },
       {
         signature: 'abstract list(caller?: Agent): JobSnapshot[]',
@@ -1437,7 +1512,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
   {
     key: 'shell',
     summary: 'Abstract bash execution service.',
-    description: 'Abstract bash execution service. Subclass, implement the abstract methods, and load the subclass as a plugin — it registers as `ctx.shell` (one implementation per context; loading a second throws, which is cordis\' standard duplicate-service behavior).\n\nImplementations must honor these semantics:\n\n- run rejects only for infrastructure failures. Nonzero exits, timeout kills, and abort kills resolve with a ShellRunResult.\n- start returns immediately; no timeout applies to background processes. `done` settles at process close and never rejects; spawn failures settle as `killed` with the error on stderr.\n- ShellProcess.readOutput is incremental: consecutive reads never repeat output. Lossy reads report truncation and available spill files.\n- A still-running background process is stopped and awaited when its owning composition tears down. With the subprocess seam that boundary is `ctx.subprocess` disposal, so a background process survives an executor-only reload.',
+    description: 'Abstract bash execution service. Subclass, implement the abstract methods, and load the subclass as a plugin — it registers as `ctx.shell` (one implementation per context; loading a second throws, which is cordis\' standard duplicate-service behavior).\n\nImplementations must honor these semantics:\n\n- run rejects only for infrastructure failures. Nonzero exits, timeout kills, and abort kills resolve with a ShellRunResult.\n- start resolves after the background process is created; no timeout applies after creation. `done` settles at process close and never rejects; creation failures reject `start`, while later process-monitoring failures settle the handle as `killed` with the error on stderr.\n- ShellProcess.readOutput is incremental: consecutive reads never repeat output. Lossy reads report truncation and available spill files.\n- A still-running background process is stopped and awaited when its owning composition tears down. With the subprocess seam that boundary is `ctx.subprocess` disposal, so a background process survives an executor-only reload.',
     methods: [
       {
         signature: 'abstract resolve(request: ShellExecRequest): ShellExecSpec',
@@ -1452,10 +1527,10 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'the outcome; nonzero exits, timeout kills, and abort kills resolve with a descriptive result rather than reject.',
       },
       {
-        signature: 'abstract start(spec: ShellExecSpec): ShellProcess',
-        description: 'Start a background process and return its handle immediately.',
+        signature: 'abstract start(spec: ShellExecSpec): Promise<ShellProcess>',
+        description: 'Start a background process and resolve after its subprocess handle is ready.',
         parameters: [{ name: 'spec', description: 'a resolved spec from {@link resolve}, never a raw request.' }],
-        returns: 'the live process handle (reads, kill, quiescence promise).',
+        returns: 'the live process handle after process creation succeeds.',
       },
     ],
   },
@@ -1671,7 +1746,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
   {
     key: 'subprocess',
     summary: 'Abstract subprocess service.',
-    description: 'Abstract subprocess service. Subclass, implement spawn, and load the subclass as a plugin — it registers as `ctx.subprocess` (one implementation per context; loading a second throws, which is cordis\' standard duplicate-service behavior).\n\nImplementations must honor these semantics:\n\n- Executable paths belong to one execution world shared with the mounted filesystem provider.\n- spawn returns immediately with a live handle; `done` resolves at process close with exit facts and rejects only for spawn-level failures.\n- Collect-mode readers are offset-based and non-consuming, so independent readers never consume one another\'s output; lossy reads report truncation and the spill file holding the complete stream when one exists. Piped streams are handed to the caller raw and never buffered here.\n- SubprocessHandle.terminate (and the spec\'s abort signal) escalates SIGTERM→grace→SIGKILL — the only termination verb — tree-scoped on every platform. SubprocessHandle.waitForExit observes whole-tree liveness, so a consumer-owned teardown ladder can hold each tier on real quiescence.\n- Disposal of the service terminates all still-running managed processes and awaits their exit.\n- spawnTerminal owns terminal allocation, text transport, foreground groups, signalling, and whole-session quiescence behind one awaited termination method; readiness and persistent-shell policy stay in the PTY consumer. Its output stream ends after queued terminal output when the top-level process exits.',
+    description: 'Abstract subprocess service. Subclass, implement spawn, and load the subclass as a plugin — it registers as `ctx.subprocess` (one implementation per context; loading a second throws, which is cordis\' standard duplicate-service behavior).\n\nImplementations must honor these semantics:\n\n- Executable paths belong to one execution world shared with the mounted filesystem provider.\n- spawn resolves only after process creation has produced a real process id and the provider owns the process tree. It rejects when either condition cannot be established. `done` resolves at process close with exit facts and rejects only for failures after creation succeeds.\n- Collect-mode readers are offset-based and non-consuming, so independent readers never consume one another\'s output; lossy reads report truncation and the spill file holding the complete stream when one exists. Piped streams are handed to the caller raw and never buffered here.\n- SubprocessHandle.terminate (and the spec\'s abort signal) escalates SIGTERM→grace→SIGKILL — the only termination verb — tree-scoped on every platform. SubprocessHandle.waitForExit observes whole-tree liveness, so a consumer-owned teardown ladder can hold each tier on real quiescence.\n- Disposal of the service terminates all still-running managed processes and awaits their exit.',
     methods: [
       {
         signature: 'abstract resolveExecutable( command: string, env?: Readonly<Record<string, string>>, signal?: AbortSignal, ): Promise<string>',
@@ -1680,16 +1755,23 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'a canonical executable path.',
       },
       {
-        signature: 'abstract spawn(spec: SubprocessSpawnSpec): SubprocessHandle',
+        signature: 'abstract spawn(spec: SubprocessSpawnSpec): Promise<SubprocessHandle>',
         description: 'Start one managed child process from a fully-specified spec; this seam applies no defaults.',
         parameters: [{ name: 'spec', description: 'argv, directory, stdio dispositions, grace, cancellation, and environment.' }],
-        returns: 'the live process handle (streams/readers, signalling, outcome promise).',
+        returns: 'the live process handle after its real process id and provider ownership are established.',
       },
+    ],
+  },
+  {
+    key: 'subprocessPty',
+    summary: 'Optional PTY process service.',
+    description: 'Optional PTY process service. Providers publish a handle only after terminal allocation has a positive process id and the complete session is owned. Service disposal terminates and joins every still-live handle.',
+    methods: [
       {
         signature: 'abstract spawnTerminal(spec: SubprocessTerminalSpawnSpec): Promise<SubprocessTerminalHandle>',
-        description: 'Allocate a real terminal and start one owned process session. This is the only non-pipe process primitive: implementations own terminal byte I/O, foreground groups, signals, and complete session-tree cleanup.',
+        description: 'Allocate a real terminal and start one owned process session.',
         parameters: [{ name: 'spec', description: 'fully specified argv, cwd, environment, dimensions, grace, and allocation cancellation.' }],
-        returns: 'the live terminal handle after allocation succeeds.',
+        returns: 'the live terminal handle after allocation and ownership succeed.',
       },
     ],
   },
@@ -2101,6 +2183,50 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'Parse and execute a workflow script.',
         parameters: [{ name: 'request', description: 'the script, its `args`, the parent agent, and an optional cancel signal.' }],
         returns: 'the live run; its `result` resolves when the script settles.',
+      },
+    ],
+  },
+  {
+    key: 'workspaceFiles',
+    summary: 'Host-owned workspace file gateway published through generated Typert Remote descriptors.',
+    description: 'Host-owned workspace file gateway published through generated Typert Remote descriptors.',
+    methods: [
+      {
+        signature: '@Remote(\'list\') async list(request: WorkspaceFilesListRequest, signal?: AbortSignal): Promise<WorkspaceFilesResult<WorkspaceFilesListValue>>',
+        description: 'List one direct workspace directory without materializing more than the configured entry limit.',
+        parameters: [{ name: 'request', description: 'Registered workspace and canonical relative directory.' }, { name: 'signal', description: 'Cancels filesystem work.' }],
+        returns: 'stable entries or one business failure.',
+      },
+      {
+        signature: '@Remote(\'read\') async read(request: WorkspaceFilesReadRequest, signal?: AbortSignal): Promise<WorkspaceFilesResult<WorkspaceFilesReadValue>>',
+        description: 'Read one regular UTF-8 file and reject a mutation observed during the bounded read.',
+        parameters: [{ name: 'request', description: 'Registered workspace and canonical relative file.' }, { name: 'signal', description: 'Cancels filesystem work.' }],
+        returns: 'stable content/version pair or one business failure.',
+      },
+      {
+        signature: '@Remote(\'save\') async save(request: WorkspaceFilesSaveRequest, signal?: AbortSignal): Promise<WorkspaceFilesResult<WorkspaceFilesSaveValue>>',
+        description: 'Replace one existing file only when its opaque observed revision still matches.',
+        parameters: [{ name: 'request', description: 'Complete content and compare-and-swap basis.' }, { name: 'signal', description: 'Cancels before atomic publication.' }],
+        returns: 'the durable new revision or one business failure.',
+      },
+      {
+        signature: '@Remote(\'resolveLocation\') async resolveLocation( request: WorkspaceFilesResolveLocationRequest, signal?: AbortSignal, ): Promise<WorkspaceFilesResult<WorkspaceFilesResolveLocationValue>>',
+        description: 'Resolve an untrusted model-facing location into a canonical relative IDE identity.',
+        parameters: [{ name: 'request', description: 'Registered workspace and absolute or relative candidate.' }, { name: 'signal', description: 'Cancels filesystem work.' }],
+        returns: 'safe location metadata or one business failure.',
+      },
+    ],
+  },
+  {
+    key: 'workspaceRegistration',
+    summary: 'Remote gateway that never accepts a renderer-supplied filesystem path.',
+    description: 'Remote gateway that never accepts a renderer-supplied filesystem path.',
+    methods: [
+      {
+        signature: '@Remote(\'pickAndRegister\') async pickAndRegister(signal?: AbortSignal): Promise<WorkspaceRegistrationResult>',
+        description: 'Open the selected Host picker and register its result while the caller remains live.',
+        parameters: [{ name: 'signal', description: 'Renderer request lifetime; a late chooser result is discarded after abort.' }],
+        returns: 'the registered Workspace, cancellation, or a stable business failure.',
       },
     ],
   },
@@ -2738,6 +2864,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface CancelOptions {\n    keepInbox?: boolean | undefined;\n}',
   },
   {
+    name: 'ClientModuleDeliveryHost',
+    declaration: 'export interface ClientModuleDeliveryHost {\n    graph(): WebBootGraph;\n    clientPath(id: string): string | undefined;\n    onGraphChanged(listener: () => void): () => void;\n}',
+  },
+  {
+    name: 'ClientRequest',
+    declaration: 'export interface ClientRequest {\n    type: \'client-request\';\n    rpcId: RpcId;\n    method: string;\n    payload: unknown;\n}',
+  },
+  {
     name: 'ClientResponse',
     declaration: 'export interface ClientResponse {\n    type: \'client-response\';\n    rpcId: RpcId;\n    result: RpcResult<unknown>;\n}',
   },
@@ -2828,6 +2962,38 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'ConfinedSandboxMode',
     declaration: 'export type ConfinedSandboxMode = Exclude<SandboxMode, \'danger-full-access\'>;',
+  },
+  {
+    name: 'ConnectionCallerAuthority',
+    declaration: 'export type ConnectionCallerAuthority = \'trusted-host\' | \'loopback\';',
+  },
+  {
+    name: 'ConnectionInvokeRequest',
+    declaration: 'export interface ConnectionInvokeRequest {\n    readonly channel: string;\n    readonly message: ClientRequest;\n    readonly caller: ConnectionCallerAuthority;\n    readonly signal: AbortSignal;\n    readonly authorize: (target: ConnectionRpcTarget) => boolean;\n}',
+  },
+  {
+    name: 'ConnectionRpcAuthority',
+    declaration: 'export type ConnectionRpcAuthority = \'trusted-host\' | \'loopback\';',
+  },
+  {
+    name: 'ConnectionRpcEndpointMatcher',
+    declaration: 'export type ConnectionRpcEndpointMatcher = (endpoint: string) => boolean;',
+  },
+  {
+    name: 'ConnectionRpcHandler',
+    declaration: 'export type ConnectionRpcHandler = (endpoint: string, payload: unknown, signal: AbortSignal) => Promise<RpcResult<unknown>>;',
+  },
+  {
+    name: 'ConnectionRpcHandlerOptions',
+    declaration: 'export interface ConnectionRpcHandlerOptions {\n    readonly authority: ConnectionRpcAuthority;\n}',
+  },
+  {
+    name: 'ConnectionRpcTarget',
+    declaration: 'export type ConnectionRpcTarget = {\n    readonly kind: \'registered\';\n    readonly channel: string;\n    readonly endpoint: string;\n    readonly authority: ConnectionRpcAuthority;\n} | {\n    readonly kind: \'api-proxy\';\n    readonly channel: \'/api\';\n    readonly endpoint: string;\n};',
+  },
+  {
+    name: 'ConnectionStream',
+    declaration: 'export type ConnectionStream = \'events.mux\' | \'events.host\';',
   },
   {
     name: 'ContentBlockMap',
@@ -3130,6 +3296,26 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface GoalView extends GoalSnapshot {\n    readonly roundsStarted: number;\n    readonly createdAt: number;\n    readonly updatedAt: number;\n    readonly activation: GoalActivation;\n}',
   },
   {
+    name: 'HostConnectionRpc',
+    declaration: 'export interface HostConnectionRpc {\n    handle(channel: string, handler: ConnectionRpcHandler, options: ConnectionRpcHandlerOptions): () => Promise<void>;\n    intercept(channel: \'/api\', matches: ConnectionRpcEndpointMatcher, handler: ConnectionRpcHandler, options: ConnectionRpcHandlerOptions): () => Promise<void>;\n}',
+  },
+  {
+    name: 'HostConnectionTransportHost',
+    declaration: 'export interface HostConnectionTransportHost {\n    onChannel(listener: (channel: string) => () => void | Promise<void>): () => Promise<void>;\n    invoke(request: ConnectionInvokeRequest): Promise<ServerResponse>;\n    respond(message: ClientResponse, signal: AbortSignal): Promise<RpcReceipt>;\n    subscribe(stream: ConnectionStream, signal: AbortSignal): AsyncIterable<ServerRequest>;\n}',
+  },
+  {
+    name: 'HostInitiatedMethodMap',
+    declaration: 'export interface HostInitiatedMethodMap {\n    \'directory.pick\': {\n        readonly request: Record<string, never>;\n        readonly response: {\n            readonly path: string | null;\n        };\n    };\n}',
+  },
+  {
+    name: 'HostInitiatedRequest',
+    declaration: 'export type HostInitiatedRequest<K extends keyof HostInitiatedMethodMap> = HostInitiatedMethodMap[K][\'request\'];',
+  },
+  {
+    name: 'HostInitiatedResponse',
+    declaration: 'export type HostInitiatedResponse<K extends keyof HostInitiatedMethodMap> = HostInitiatedMethodMap[K][\'response\'];',
+  },
+  {
     name: 'ImageAttachmentLimits',
     declaration: 'export interface ImageAttachmentLimits {\n    maxImageBytes: number;\n    maxImagesPerMessage: number;\n    maxMessageImageBytes: number;\n    maxImagePixels: number;\n    mediaTypes: readonly ImageMediaType[];\n}',
   },
@@ -3219,7 +3405,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'JobStart',
-    declaration: 'export interface JobStart {\n    kind: JobKind;\n    label: string;\n    outputLimitBytes?: number;\n    owner?: Agent;\n    run(): JobHooks;\n}',
+    declaration: 'export interface JobStart {\n    kind: JobKind;\n    label: string;\n    outputLimitBytes?: number;\n    owner?: Agent;\n    run(signal: AbortSignal): Promise<JobHooks>;\n}',
   },
   {
     name: 'JobStatus',
@@ -3494,6 +3680,22 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type PrepareSessionOptions = (CreateSessionOptions & {\n    readonly seedSource?: undefined;\n}) | RestoredSessionOptions;',
   },
   {
+    name: 'PresetAdmissionContribution',
+    declaration: 'export interface PresetAdmissionContribution {\n    admit(request: PresetAdmissionRequest): PresetAdmissionRefusal | undefined;\n}',
+  },
+  {
+    name: 'PresetAdmissionOperation',
+    declaration: 'export type PresetAdmissionOperation = \'resolve\' | \'mount\' | \'recompose\' | \'standingKeyFor\' | \'composeFrom\';',
+  },
+  {
+    name: 'PresetAdmissionRefusal',
+    declaration: 'export interface PresetAdmissionRefusal {\n    readonly code: string;\n    readonly reason: string;\n    readonly details?: Readonly<Record<string, JsonValue>>;\n}',
+  },
+  {
+    name: 'PresetAdmissionRequest',
+    declaration: 'export interface PresetAdmissionRequest {\n    readonly operation: PresetAdmissionOperation;\n    readonly presetId: string;\n}',
+  },
+  {
     name: 'PresetOption',
     declaration: 'export interface PresetOption {\n    value: string;\n    name: string;\n    description?: string;\n}',
   },
@@ -3576,6 +3778,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'RedactedSecret',
     declaration: 'export interface RedactedSecret {\n    path: string[];\n    set: boolean;\n}',
+  },
+  {
+    name: 'RegisteredWorkspaceView',
+    declaration: 'export interface RegisteredWorkspaceView {\n    workspaceId: WorkspaceId;\n    path: string;\n    title: string;\n    sessionIds: SessionId[];\n    createdAt: string;\n    updatedAt: string;\n}',
   },
   {
     name: 'RequestContext',
@@ -3716,6 +3922,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'SearchResultView',
     declaration: 'export type SearchResultView = SearchMatchesResultView | SearchPathsResultView;',
+  },
+  {
+    name: 'ServerRequest',
+    declaration: 'export interface ServerRequest {\n    type: \'server-request\';\n    rpcId: RpcId;\n    method: string;\n    payload: unknown;\n}',
   },
   {
     name: 'ServerResponse',
@@ -4644,6 +4854,98 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'WorkflowStopReason',
     declaration: 'export type WorkflowStopReason = \'completed\' | \'cancelled\' | \'error\';',
+  },
+  {
+    name: 'WorkspaceFileEntry',
+    declaration: 'export interface WorkspaceFileEntry {\n    readonly name: string;\n    readonly segments: WorkspaceFileSegments;\n    readonly kind: WorkspaceFileKind;\n    readonly size?: number;\n}',
+  },
+  {
+    name: 'WorkspaceFileKind',
+    declaration: 'export type WorkspaceFileKind = \'file\' | \'directory\' | \'other\' | \'blocked\';',
+  },
+  {
+    name: 'WorkspaceFileLocation',
+    declaration: 'export interface WorkspaceFileLocation {\n    readonly path: string;\n    readonly line?: number;\n}',
+  },
+  {
+    name: 'WorkspaceFileSegments',
+    declaration: 'export type WorkspaceFileSegments = readonly string[];',
+  },
+  {
+    name: 'WorkspaceFilesErrorCode',
+    declaration: 'export type WorkspaceFilesErrorCode = \'workspace-not-found\' | \'invalid-path\' | \'outside-workspace\' | \'not-found\' | \'not-directory\' | \'not-regular-file\' | \'not-text\' | \'too-large\' | \'permission-denied\' | \'changed-during-read\' | \'version-conflict\';',
+  },
+  {
+    name: 'WorkspaceFilesFailure',
+    declaration: 'export interface WorkspaceFilesFailure {\n    readonly code: WorkspaceFilesErrorCode;\n    readonly limit?: number;\n    readonly actual?: number;\n}',
+  },
+  {
+    name: 'WorkspaceFilesListRequest',
+    declaration: 'export interface WorkspaceFilesListRequest {\n    readonly workspaceId: WorkspaceId;\n    readonly directory: WorkspaceFileSegments;\n}',
+  },
+  {
+    name: 'WorkspaceFilesListValue',
+    declaration: 'export interface WorkspaceFilesListValue {\n    readonly directory: WorkspaceFileSegments;\n    readonly entries: readonly WorkspaceFileEntry[];\n}',
+  },
+  {
+    name: 'WorkspaceFilesReadRequest',
+    declaration: 'export interface WorkspaceFilesReadRequest {\n    readonly workspaceId: WorkspaceId;\n    readonly path: WorkspaceFileSegments;\n}',
+  },
+  {
+    name: 'WorkspaceFilesReadValue',
+    declaration: 'export interface WorkspaceFilesReadValue {\n    readonly path: WorkspaceFileSegments;\n    readonly content: string;\n    readonly version: WorkspaceFileVersion;\n}',
+  },
+  {
+    name: 'WorkspaceFilesRejected',
+    declaration: 'export interface WorkspaceFilesRejected {\n    readonly ok: false;\n    readonly error: WorkspaceFilesFailure;\n}',
+  },
+  {
+    name: 'WorkspaceFilesResolveLocationRequest',
+    declaration: 'export interface WorkspaceFilesResolveLocationRequest {\n    readonly workspaceId: WorkspaceId;\n    readonly location: WorkspaceFileLocation;\n}',
+  },
+  {
+    name: 'WorkspaceFilesResolveLocationValue',
+    declaration: 'export interface WorkspaceFilesResolveLocationValue {\n    readonly segments: WorkspaceFileSegments;\n    readonly kind: Exclude<WorkspaceFileKind, \'blocked\'>;\n    readonly textSupported: boolean;\n    readonly line?: number;\n}',
+  },
+  {
+    name: 'WorkspaceFilesResult',
+    declaration: 'export type WorkspaceFilesResult<T> = WorkspaceFilesSuccess<T> | WorkspaceFilesRejected;',
+  },
+  {
+    name: 'WorkspaceFilesSaveRequest',
+    declaration: 'export interface WorkspaceFilesSaveRequest {\n    readonly workspaceId: WorkspaceId;\n    readonly path: WorkspaceFileSegments;\n    readonly content: string;\n    readonly expectedVersion: WorkspaceFileVersion;\n}',
+  },
+  {
+    name: 'WorkspaceFilesSaveValue',
+    declaration: 'export interface WorkspaceFilesSaveValue {\n    readonly path: WorkspaceFileSegments;\n    readonly version: WorkspaceFileVersion;\n}',
+  },
+  {
+    name: 'WorkspaceFilesSuccess',
+    declaration: 'export interface WorkspaceFilesSuccess<T> {\n    readonly ok: true;\n    readonly value: T;\n}',
+  },
+  {
+    name: 'WorkspaceFileVersion',
+    declaration: 'export type WorkspaceFileVersion = Branded<\'WorkspaceFileVersion\'>;',
+  },
+  {
+    name: 'WorkspaceRegistrationFailure',
+    declaration: 'export interface WorkspaceRegistrationFailure {\n    readonly code: WorkspaceRegistrationFailureCode;\n    readonly message: string;\n}',
+  },
+  {
+    name: 'WorkspaceRegistrationFailureCode',
+    declaration: 'export type WorkspaceRegistrationFailureCode = \'cancelled\' | \'picker-unavailable\' | \'registration-failed\';',
+  },
+  {
+    name: 'WorkspaceRegistrationRejected',
+    declaration: 'export interface WorkspaceRegistrationRejected {\n    readonly ok: false;\n    readonly error: WorkspaceRegistrationFailure;\n}',
+  },
+  {
+    name: 'WorkspaceRegistrationResult',
+    declaration: 'export type WorkspaceRegistrationResult = WorkspaceRegistrationSuccess | WorkspaceRegistrationRejected;',
+  },
+  {
+    name: 'WorkspaceRegistrationSuccess',
+    declaration: 'export interface WorkspaceRegistrationSuccess {\n    readonly ok: true;\n    readonly value: {\n        readonly workspace: RegisteredWorkspaceView;\n    };\n}',
   },
 ]
 

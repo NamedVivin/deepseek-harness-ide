@@ -101,8 +101,8 @@ async function realHarness(script: readonly ResponsesBehavior[]): Promise<{
   await ctx.plugin(LocalSubprocessRuntime)
   const handles: SubprocessHandle[] = []
   const spawn = ctx.subprocess.spawn.bind(ctx.subprocess)
-  vi.spyOn(ctx.subprocess, 'spawn').mockImplementation((spec) => {
-    const handle = spawn(spec)
+  vi.spyOn(ctx.subprocess, 'spawn').mockImplementation(async (spec) => {
+    const handle = await spawn(spec)
     handles.push(handle)
     return handle
   })

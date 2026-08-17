@@ -256,7 +256,9 @@ export interface SessionsApi {
    * where one exists, else the deployment's own. The resolved id is stored on
    * the session header, so a later resume rebuilds the same agent. An unknown
    * id fails with `agent-preset-not-found`, and a preset whose composition
-   * cannot be mounted fails with `agent-preset-invalid`.
+   * cannot be mounted fails with `agent-preset-invalid`. A desktop admission
+   * refusal returns `desktop-preset-unsupported` before cwd creation or Agent
+   * creation begins.
    */
   create(request: RpcRequest<{ workspaceId?: WorkspaceId; cwd?: string; sessionId?: SessionId; agentPreset?: string }>):
   Promise<RpcResponse<{ sessionId: SessionId; agentPreset?: string }>>
@@ -277,7 +279,9 @@ export interface SessionsApi {
    * loadOlder (the only beforeSeq path) is the only path that never needs one.
    * A deployment without the registry serves histories without the block.
    * Reading history uses an attached Session or persistence inspection and
-   * never resumes or publishes an Agent.
+   * never resumes or publishes an Agent. A cold desktop session recorded with
+   * an unsupported preset returns `desktop-preset-unsupported` rather than
+   * mounting that composition or degrading to the global presenter view.
    */
   history(request: RpcRequest<{ sessionId: SessionId; beforeSeq?: number; maxMessages?: number }>):
   Promise<RpcResponse<{ events: HistoryEntry[]; hasMore: boolean; projections?: SessionProjectionsBlock }>>
@@ -332,7 +336,8 @@ export interface SessionsApi {
    * title. Reading the source uses attached state or persistence inspection
    * without acquiring an Agent. Workspace attachment follows the source
    * directly, or the nearest workspace-owning ancestor when the source is a
-   * subagent.
+   * subagent. Preset admission precedes child Agent creation; a desktop source
+   * recorded under an unsupported preset returns `desktop-preset-unsupported`.
    */
   fork(request: RpcRequest<{ sessionId: SessionId; atSeq?: number }>):
   Promise<RpcResponse<{ sessionId: SessionId }>>

@@ -5,7 +5,7 @@
  * rebuilding it differently would replay tool calls the new agent cannot make.
  */
 
-import { mkdtempSync, realpathSync } from 'node:fs'
+import { existsSync, mkdtempSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
@@ -16,12 +16,14 @@ import UserQuestionService from '@deepseek-ai/dsh-user-questions'
 import { RpcId, type RpcRequest } from '../src/api/rpc.ts'
 import type { HostFrame } from '../src/api/events.ts'
 import {
-  InvalidPresetIdError, PresetExistsError, resolveSessionPreset, UnknownPresetError,
+  InvalidPresetIdError, PresetAdmissionError, PresetExistsError,
+  resolveSessionPreset, UnknownPresetError,
+  type PresetAdmissionOperation,
 } from '@deepseek-ai/dsh-agent-presets'
 import type {} from '@deepseek-ai/dsh-agent-presets/types'
 import { GoalId } from '@deepseek-ai/dsh-goal'
 import { createApiProxy } from '../src/api-proxy.ts'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 let nextRpc = 0
 function request<P>(payload: P): RpcRequest<P> {
@@ -39,7 +41,12 @@ function stubAgent(session: Session): Agent {
  * `apps/cli`. Ids listed in `userIds` present as locally authored; the rest
  * ship with the deployment.
  */
-function roster(ids: readonly string[], userIds: readonly string[] = []): unknown {
+function roster(
+  ids: readonly string[],
+  userIds: readonly string[] = [],
+  admit?: (operation: PresetAdmissionOperation, presetId: string) => void,
+  mounted?: (presetId: string) => void,
+): unknown {
   const trustOf = (id: string): 'system' | 'user' => (userIds.includes(id) ? 'user' : 'system')
   const presetOf = (id: string): object =>
     ({ id, trust: trustOf(id), path: `/presets/${id}/agent.cordis.yml` })
@@ -48,10 +55,16 @@ function roster(ids: readonly string[], userIds: readonly string[] = []): unknow
     list: () => Promise.resolve(ids.map(presetOf)),
     resolve: (id?: string) => {
       const wanted = id ?? ids[0] ?? ''
+      admit?.('resolve', wanted)
       if (!ids.includes(wanted)) return Promise.reject(new UnknownPresetError(wanted, ids))
       return Promise.resolve(presetOf(wanted))
     },
-    mount: (_ctx: Context, id?: string) => Promise.resolve(presetOf(id ?? ids[0] ?? '')),
+    mount: (_ctx: Context, id?: string) => {
+      const wanted = id ?? ids[0] ?? ''
+      admit?.('mount', wanted)
+      mounted?.(wanted)
+      return Promise.resolve(presetOf(wanted))
+    },
     // What a real mount leaves behind: a service instance only the agent that
     // mounted it can be used to address. The doubles are per agent so a test
     // can tell "this session's" from "some session's".
@@ -72,12 +85,14 @@ function roster(ids: readonly string[], userIds: readonly string[] = []): unknow
       return Promise.resolve()
     },
     recompose: (_ctx: Context, id: string) => {
+      admit?.('recompose', id)
       if (!ids.includes(id)) return Promise.reject(new UnknownPresetError(id, ids))
       return Promise.resolve({ id, trust: 'system', path: `/presets/${id}.yml` })
     },
     // The standing scope key a cold transcript read resolves presenters in.
     standingKeyFor: (id?: string) => {
       const wanted = id ?? ids[0] ?? ''
+      admit?.('standingKeyFor', wanted)
       standingKeyRequests.push(wanted)
       if (!ids.includes(wanted) || failingStandingKeys.has(wanted)) {
         return Promise.reject(new UnknownPresetError(wanted, ids))
@@ -101,10 +116,28 @@ const failingStandingKeys = new Set<string>()
 /** Per-agent service instances a mounted preset would own, keyed by session id. */
 const services = new Map<string, Record<string, unknown>>()
 
+/** The desktop provider's preset-only admission rule, without its roster startup checks. */
+function admitDesktop(operation: PresetAdmissionOperation, presetId: string): void {
+  if (presetId === 'desktop-default') return
+  throw new PresetAdmissionError(
+    { operation, presetId },
+    {
+      code: 'desktop-preset-unsupported',
+      reason: 'desktop agents can use only preset "desktop-default"',
+      details: { supportedPreset: 'desktop-default' },
+    },
+  )
+}
+
 async function harness(
   presets?: readonly string[],
   persistence?: unknown,
-  options: { userIds?: readonly string[]; defaults?: Record<string, unknown> } = {},
+  options: {
+    userIds?: readonly string[]
+    defaults?: Record<string, unknown>
+    admit?: (operation: PresetAdmissionOperation, presetId: string) => void
+    mounted?: (presetId: string) => void
+  } = {},
 ) {
   const cwd = realpathSync(mkdtempSync(join(tmpdir(), 'dsh-apiproxy-preset-')))
   const ctx = new Context()
@@ -112,7 +145,12 @@ async function harness(
   await ctx.plugin(AgentRegistry)
   await ctx.plugin(UserQuestionService)
   ctx.provide('sessionPersistence', (persistence ?? { list: () => Promise.resolve([]) }) as never)
-  if (presets !== undefined) ctx.provide('agentPresets', roster(presets, options.userIds) as never)
+  if (presets !== undefined) {
+    ctx.provide(
+      'agentPresets',
+      roster(presets, options.userIds, options.admit, options.mounted) as never,
+    )
+  }
 
   const factory: AgentFactory = {
     async createAgent(_ownerCtx, options) {
@@ -169,6 +207,38 @@ describe('session.create with an agent preset', () => {
     expect(response.result.ok).toBe(false)
     if (response.result.ok) throw new Error('unreachable')
     expect(response.result.error.code).toBe('agent-preset-not-found')
+  })
+
+  it('rejects an unsupported desktop preset before mkdir, Agent creation, or mount', async () => {
+    const mounted: string[] = []
+    const { api, ctx, cwd } = await harness(['desktop-default'], undefined, {
+      admit: admitDesktop,
+      mounted: (id) => { mounted.push(id) },
+    })
+    const create = vi.spyOn(ctx.agents, 'create')
+    const requestedCwd = join(cwd, 'must-not-exist')
+
+    const response = await api.sessions.create(request({
+      sessionId: SessionId('desktop-create-refused'),
+      cwd: requestedCwd,
+      agentPreset: 'standard',
+    }))
+
+    expect(response.result).toMatchObject({
+      ok: false,
+      error: {
+        code: 'desktop-preset-unsupported',
+        details: {
+          agentPreset: 'standard',
+          operation: 'resolve',
+          reason: 'desktop agents can use only preset "desktop-default"',
+          supportedPreset: 'desktop-default',
+        },
+      },
+    })
+    expect(existsSync(requestedCwd)).toBe(false)
+    expect(create).not.toHaveBeenCalled()
+    expect(mounted).toEqual([])
   })
 
   it('refuses to adopt a live session under a different preset', async () => {
@@ -248,6 +318,108 @@ describe('session.create with an agent preset', () => {
       requestedPreset: 'standard',
       existingPreset: undefined,
     })
+  })
+})
+
+describe('cold desktop preset admission', () => {
+  it('preserves the refusal before agents.resume or preset mount', async () => {
+    const sessionId = SessionId('desktop-resume-refused')
+    const meta = {
+      id: sessionId,
+      createdAt: 1,
+      cwd: '/workspace/desktop-resume-refused',
+      agentPreset: 'standard',
+    }
+    const mounted: string[] = []
+    const { api, ctx } = await harness(['desktop-default'], {
+      list: () => Promise.resolve([meta]),
+      inspect: () => Promise.resolve({ meta, events: [] }),
+    }, {
+      admit: admitDesktop,
+      mounted: (id) => { mounted.push(id) },
+    })
+    const resume = vi.spyOn(ctx.agents, 'resume')
+
+    const response = await api.sessions.models(request({ sessionId }))
+
+    expect(response.result).toMatchObject({
+      ok: false,
+      error: {
+        code: 'desktop-preset-unsupported',
+        details: {
+          agentPreset: 'standard',
+          operation: 'resolve',
+          supportedPreset: 'desktop-default',
+        },
+      },
+    })
+    expect(resume).not.toHaveBeenCalled()
+    expect(mounted).toEqual([])
+  })
+
+  it('returns the refusal from a cold transcript instead of mounting or degrading', async () => {
+    const sessionId = SessionId('desktop-history-refused')
+    const meta = {
+      id: sessionId,
+      createdAt: 1,
+      cwd: '/workspace/desktop-history-refused',
+      agentPreset: 'minimal',
+    }
+    const mounted: string[] = []
+    const { api } = await harness(['desktop-default'], {
+      list: () => Promise.resolve([meta]),
+      inspect: () => Promise.resolve({ meta, events: [] }),
+    }, {
+      admit: admitDesktop,
+      mounted: (id) => { mounted.push(id) },
+    })
+
+    const response = await api.sessions.history(request({ sessionId }))
+
+    expect(response.result).toMatchObject({
+      ok: false,
+      error: {
+        code: 'desktop-preset-unsupported',
+        details: {
+          agentPreset: 'minimal',
+          operation: 'standingKeyFor',
+          supportedPreset: 'desktop-default',
+        },
+      },
+    })
+    expect(mounted).toEqual([])
+  })
+
+  it('rejects a fork of unsupported recorded history before child creation or mount', async () => {
+    const mounted: string[] = []
+    const { api, ctx, cwd } = await harness(['desktop-default'], undefined, {
+      admit: admitDesktop,
+      mounted: (id) => { mounted.push(id) },
+    })
+    ctx.provide('workspaceRegistry', { list: () => [] } as never)
+    const sourceId = SessionId('desktop-fork-refused')
+    const source = ctx.sessions.create(sourceId, {
+      meta: { cwd, agentPreset: 'standard' },
+    })
+    source.append('turn/start', { turn: 0 })
+    source.append('turn/end', { turn: 0, reason: { kind: 'completed' } })
+    const create = vi.spyOn(ctx.agents, 'create')
+
+    const response = await api.sessions.fork(request({ sessionId: sourceId }))
+
+    expect(response.result).toMatchObject({
+      ok: false,
+      error: {
+        code: 'desktop-preset-unsupported',
+        details: {
+          agentPreset: 'standard',
+          operation: 'resolve',
+          supportedPreset: 'desktop-default',
+        },
+      },
+    })
+    expect(create).not.toHaveBeenCalled()
+    expect(mounted).toEqual([])
   })
 })
 
@@ -452,6 +624,40 @@ describe('agentPreset.select', () => {
     expect(response.result.ok).toBe(false)
     if (response.result.ok) throw new Error('unreachable')
     expect(response.result.error.code).toBe('agent-preset-not-found')
+  })
+
+  it('rejects desktop switching before recompose and keeps the current preset', async () => {
+    const mounted: string[] = []
+    const { api, ctx } = await harness(['desktop-default'], undefined, {
+      admit: admitDesktop,
+      mounted: (id) => { mounted.push(id) },
+    })
+    await api.sessions.create(request({
+      sessionId: SessionId('desktop-select-refused'),
+      agentPreset: 'desktop-default',
+    }))
+    mounted.length = 0
+
+    const response = await api.agentPresets.select(request({
+      sessionId: SessionId('desktop-select-refused'),
+      agentPreset: 'minimal',
+    }))
+
+    expect(response.result).toMatchObject({
+      ok: false,
+      error: {
+        code: 'desktop-preset-unsupported',
+        details: {
+          agentPreset: 'minimal',
+          operation: 'resolve',
+          supportedPreset: 'desktop-default',
+        },
+      },
+    })
+    const session = ctx.sessions.get(SessionId('desktop-select-refused'))
+    expect(resolveSessionPreset(session!)).toBe('desktop-default')
+    expect(session?.events.some(event => event.type === 'agent-preset/selected')).toBe(false)
+    expect(mounted).toEqual([])
   })
 
   it('reports a deployment that composes no presets', async () => {

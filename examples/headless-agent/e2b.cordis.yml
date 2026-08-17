@@ -26,6 +26,8 @@
               timeoutMs: 300000
           - id: subprocess-e2b
             name: '@deepseek-ai/dsh-subprocess-e2b'
+          - id: subprocess-pty-e2b
+            name: '@deepseek-ai/dsh-subprocess-pty-e2b'
           - id: fs-e2b
             name: '@deepseek-ai/dsh-fs-e2b'
           - id: sandbox-policy

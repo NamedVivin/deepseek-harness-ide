@@ -30,6 +30,9 @@
       "path": "../../packages/bundle/headless"
     },
     {
+      "path": "../../packages/bundle/ide-app"
+    },
+    {
       "path": "../../packages/bundle/web-app"
     },
     {

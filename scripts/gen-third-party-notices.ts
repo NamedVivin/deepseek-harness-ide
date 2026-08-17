@@ -13,6 +13,7 @@ import { resolve } from 'node:path'
 import * as yaml from 'js-yaml'
 import { parse as parseToml, type TomlTableWithoutBigInt, type TomlValueWithoutBigInt } from 'smol-toml'
 import parseSpdx from 'spdx-expression-parse'
+import { DESKTOP_ELECTRON_VERSION, DESKTOP_NODE_VERSION } from '../apps/desktop/src/assembly.ts'
 
 const root = resolve(import.meta.dirname, '..')
 const OUT = 'THIRD_PARTY_NOTICES.md'
@@ -38,6 +39,11 @@ const DEV_ONLY_AREAS = [
   'examples/',
   'native/',
 ] as const
+
+/** Build-time declarations whose native distributions are copied into a shipped artifact. */
+const DISTRIBUTED_DEV_DEPENDENCIES = new Map<string, ReadonlySet<string>>([
+  ['apps/desktop/package.json', new Set(['electron'])],
+])
 
 /** First-party public native packages: reachable at runtime but not third-party. */
 const FIRST_PARTY = new Set([
@@ -75,6 +81,8 @@ const OVERRIDES: Record<string, { license?: string; repo?: string }> = {
   '@modelcontextprotocol/server-filesystem': { license: 'MIT / Apache-2.0', repo: 'https://github.com/modelcontextprotocol/servers' },
   // No repository field in the published manifest.
   'node-addon-require-builtin': { repo: 'https://www.npmjs.com/package/node-addon-require-builtin' },
+  // Published versions span the project's transfer from visionmedia.
+  'debug': { repo: 'https://github.com/debug-js/debug' },
 }
 
 /**
@@ -376,7 +384,10 @@ export function tierExternalDeps(manifests: Map<string, Manifest>, names: Set<st
     for (const kind of ALL_KINDS) {
       for (const [dep, range] of Object.entries(manifest[kind] ?? {})) {
         if (names.has(dep) || range.startsWith('workspace:')) continue
-        const runtime = !devOnly && (RUNTIME_KINDS as readonly string[]).includes(kind)
+        const distributedDevDependency = kind === 'devDependencies'
+          && DISTRIBUTED_DEV_DEPENDENCIES.get(path)?.has(dep) === true
+        const runtime = distributedDevDependency
+          || (!devOnly && (RUNTIME_KINDS as readonly string[]).includes(kind))
         tiers.set(dep, (tiers.get(dep) ?? false) || runtime)
       }
     }
@@ -656,6 +667,56 @@ ${rows.join('\n')}
 `
 }
 
+interface DesktopDistribution {
+  readonly electronVersion: string
+  readonly nodeVersion: string
+  readonly ripgrepVersion: string
+  readonly koffiVersion: string
+}
+
+function installedVersion(name: string): string {
+  const version = installedManifest(name)?.version
+  if (version === undefined || version === '') {
+    throw new Error(`gen-third-party-notices: cannot resolve installed version for ${name}; run \`pnpm install\`.`)
+  }
+  return version
+}
+
+function collectDesktopDistribution(): DesktopDistribution {
+  const manifest = readManifest('apps/desktop/package.json')
+  const electron = manifest.devDependencies?.electron
+  if (electron !== DESKTOP_ELECTRON_VERSION) {
+    throw new Error(
+      `gen-third-party-notices: apps/desktop must pin electron ${DESKTOP_ELECTRON_VERSION}, got ${JSON.stringify(electron)}.`,
+    )
+  }
+  const installedElectron = installedVersion('electron')
+  if (installedElectron !== DESKTOP_ELECTRON_VERSION) {
+    throw new Error(
+      `gen-third-party-notices: installed electron ${installedElectron} does not match ${DESKTOP_ELECTRON_VERSION}.`,
+    )
+  }
+  return {
+    electronVersion: installedElectron,
+    nodeVersion: DESKTOP_NODE_VERSION,
+    ripgrepVersion: installedVersion('@vscode/ripgrep'),
+    koffiVersion: installedVersion('koffi'),
+  }
+}
+
+function renderDesktopDistribution(distribution: DesktopDistribution): string {
+  return `## Packaged desktop executable payloads
+
+The native desktop application carries this notice and the project \`LICENSE\` under \`desktop-resources/\`. Assembly also preserves the license files shipped with each executable payload at fixed paths verified before a candidate is uploaded:
+
+- Electron ${distribution.electronVersion} and its bundled Chromium runtime. Electron's \`LICENSE\` and Chromium's complete \`LICENSES.chromium.html\` are copied from the installed Electron distribution to \`desktop-resources/legal/electron/\`.
+- Node.js ${distribution.nodeVersion}. The unmodified official distribution's \`LICENSE\` is copied beside the bundled executable under \`desktop-resources/runtime/\`.
+- \`@vscode/ripgrep\` ${distribution.ripgrepVersion} and its target-specific \`rg\` executable. The wrapper and platform package \`LICENSE\` files remain in the deployed Host closure.
+- \`koffi\` ${distribution.koffiVersion} and its target-specific native Node module. The package's \`LICENSE.txt\` remains in the deployed Host closure.
+- \`dsh-process-capsule\`, a first-party macOS helper built from this repository and covered by the project MIT \`LICENSE\`. Windows packages reject this helper.
+`
+}
+
 /**
  * Render the complete notices document.
  * @returns the exact bytes `THIRD_PARTY_NOTICES.md` must hold.
@@ -668,6 +729,7 @@ export function render(): string {
   const vendored = collectVendored()
   const python = collectPython()
   const patched = collectPatched()
+  const desktopDistribution = collectDesktopDistribution()
   const claudeDistribution = runtimeDeps.some(
     dep => dep.name === CLAUDE_AGENT_SDK_PACKAGE,
   )
@@ -715,6 +777,7 @@ pnpm applies local patches to the following packages at install time, so shipped
 
 ${patchedLines.join('\n')}
 ${renderClaudeDistribution(claudeDistribution)}
+${renderDesktopDistribution(desktopDistribution)}
 
 ## Development-only npm dependencies
 

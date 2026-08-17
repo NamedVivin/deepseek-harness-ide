@@ -1,0 +1,30 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "lib/types",
+    "types": ["node", "electron"]
+  },
+  "include": [
+    "src/**/*.ts",
+    "tests/**/*.ts",
+    "forge.config.ts",
+    "scripts/**/*.ts"
+  ],
+  "exclude": [
+    "src/renderer/**",
+    "tests/**/*.client.spec.ts"
+  ],
+  "references": [
+    { "path": "../../vendor/cosmokit" },
+    { "path": "../../vendor/cordis" },
+    { "path": "../../vendor/loader" },
+    { "path": "../../vendor/include" },
+    { "path": "../../packages/boot/app-boot" },
+    { "path": "../../packages/util/launch-environment" },
+    { "path": "../../packages/preset/agent-presets-desktop" },
+    { "path": "../../packages/client/modules" },
+    { "path": "../../packages/client/connection-desktop/tsconfig.host.json" },
+    { "path": "../../packages/subprocess/subprocess-guardian" }
+  ]
+}

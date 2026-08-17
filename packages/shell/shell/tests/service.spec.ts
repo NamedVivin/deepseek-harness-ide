@@ -5,7 +5,7 @@ import type { ShellExecRequest, ShellExecSpec, ShellProcess, ShellProcessRead, S
 
 /**
  * Minimal concrete executor: canned foreground results, a hand-built process
- * handle. The seam is TASK-FREE (start returns a {@link ShellProcess} handle;
+ * handle. The seam is TASK-FREE (start resolves a {@link ShellProcess} handle;
  * task semantics live in `ctx.jobs`), so this stub is all an implementation
  * owes the abstract class.
  */
@@ -33,7 +33,7 @@ class StubExecutor extends ShellExecutor {
     }
   }
 
-  start(): ShellProcess {
+  async start(): Promise<ShellProcess> {
     const proc: ShellProcess = {
       status: 'running',
       exitCode: null,
@@ -61,7 +61,7 @@ describe('ShellExecutor service seam', () => {
     expect(result.exitCode).toBe(0)
     expect(result.stdout.text).toBe('ok')
 
-    const proc = ctx.shell.start(spec)
+    const proc = await ctx.shell.start(spec)
     expect(proc.status).toBe('running')
     expect(proc.readOutput()).toEqual({ delta: '', lossy: false })
     expect(proc.kill()).toBe(true)

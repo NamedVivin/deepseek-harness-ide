@@ -108,10 +108,10 @@ function outputValueText(values: JsonValue[]): string {
     .join('')
 }
 
-/** Settle pending startup without rejecting the task producer contract. */
-async function settleStart(start: Promise<SubagentRun>, signal: AbortSignal): Promise<JobOutcome> {
+/** Settle a published child without rejecting the task producer contract. */
+async function settleBackgroundRun(run: SubagentRun, signal: AbortSignal): Promise<JobOutcome> {
   try {
-    return await settleRun(await start)
+    return await settleRun(run)
   } catch (error: unknown) {
     return signal.aborted
       ? { status: 'killed' }
@@ -363,8 +363,8 @@ export function apply(ctx: Context, config: Config): void {
               : outputValueText(value.output),
         }],
       },
-      // Children never mutate the parent session; the one parent-owned write
-      // (tasks.start) is a synchronous commutative insertion.
+      // Children never mutate the parent session; background registration
+      // changes only the job registry's owner-isolated state.
       isConcurrencySafe: () => true,
       async execute(args, exec) {
         const parent = exec.agent
@@ -403,18 +403,19 @@ export function apply(ctx: Context, config: Config): void {
           }
           // One-shot background child: job preflight finishes before the
           // starter can spawn, and the task-owned signal covers startup.
-          const id = jobs.start({
+          const id = await jobs.start({
             kind: 'subagent',
             label: args.description,
             owner: parent,
-            run: () => {
+            run: async (setupSignal) => {
               const controller = new AbortController()
-              const start = ctx.subagents.start(config.provider, { ...request, signal: controller.signal })
+              const signal = AbortSignal.any([controller.signal, setupSignal])
+              const run = await ctx.subagents.start(config.provider, { ...request, signal })
               return {
                 cancel: (reason?: string) => {
                   controller.abort(reason ?? 'background subagent task killed')
                 },
-                done: settleStart(start, controller.signal),
+                done: settleBackgroundRun(run, signal),
                 // No readOutput: the child session owns intermediate detail.
               }
             },

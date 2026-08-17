@@ -29,6 +29,9 @@
 - id: subprocess
   name: '@deepseek-ai/dsh-subprocess-local'
 
+- id: subprocess-pty
+  name: '@deepseek-ai/dsh-subprocess-pty-local'
+
 - id: pty
   name: '@deepseek-ai/dsh-terminal'
 

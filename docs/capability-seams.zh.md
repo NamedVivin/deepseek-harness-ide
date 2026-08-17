@@ -65,6 +65,10 @@ flowchart LR
   pkg_workspace["workspace"]
   svc_messageFeedback["ctx.messageFeedback<br/>Lifecycle-bound message feedback"]
   svc_workspaceRegistry["ctx.workspaceRegistry<br/>Workspace entity registry"]
+  pkg_host_workspace_files["host-workspace-files"]
+  svc_workspaceFiles["ctx.workspaceFiles<br/>Workspace-scoped IDE file gateway"]
+  pkg_host_workspace_registration["host-workspace-registration"]
+  svc_workspaceRegistration["ctx.workspaceRegistration<br/>Host-owned Workspace registration"]
   svc_sessionQuery["ctx.sessionQuery<br/>Session reads, traces, filters, and search"]
   pkg_session_reference["session-reference"]
   pkg_tool_session_query["tool-session-query"]
@@ -115,16 +119,21 @@ flowchart LR
   svc_e2b["ctx.e2b<br/>E2B sandbox lifecycle owner"]
   pkg_fs_e2b["fs-e2b"]
   pkg_subprocess_e2b["subprocess-e2b"]
+  pkg_subprocess_pty_e2b["subprocess-pty-e2b"]
   pkg_subprocess["subprocess"]
   svc_subprocess["ctx.subprocess<br/>Subprocess seam"]
   pkg_subprocess_local["subprocess-local"]
+  pkg_subprocess_guardian["subprocess-guardian"]
   pkg_bash_local["bash-local"]
   pkg_bash_sandbox["bash-sandbox"]
-  pkg_terminal_bash["terminal-bash"]
   pkg_lsp_stdio["lsp-stdio"]
   pkg_subagent_acp["subagent-acp"]
   pkg_subagent_codex["subagent-codex"]
   pkg_subagent_claude_code["subagent-claude-code"]
+  pkg_subprocess_pty["subprocess-pty"]
+  svc_subprocessPty["ctx.subprocessPty<br/>PTY subprocess seam"]
+  pkg_subprocess_pty_local["subprocess-pty-local"]
+  pkg_terminal_bash["terminal-bash"]
   pkg_shell["shell"]
   svc_shell["ctx.shell<br/>Bash executor seam"]
   pkg_pwsh_local["pwsh-local"]
@@ -173,16 +182,26 @@ flowchart LR
   svc_spillStore["ctx.spillStore<br/>Spill storage seam"]
   pkg_spill_local["spill-local"]
   pkg_spill_policy["spill-policy"]
-  pkg_directory_picker["directory-picker"]
+  pkg_host_directory_picker["host-directory-picker"]
   svc_directoryPicker["ctx.directoryPicker<br/>Workspace-directory picking seam"]
-  pkg_directory_picker_native["directory-picker-native"]
-  pkg_directory_picker_browse["directory-picker-browse"]
-  pkg_webserver["webserver"]
+  pkg_host_directory_picker_native["host-directory-picker-native"]
+  pkg_host_directory_picker_browse["host-directory-picker-browse"]
+  pkg_host_directory_picker_electron["host-directory-picker-electron"]
+  pkg_host_webserver["host-webserver"]
   svc_webServer["ctx.webServer<br/>HTTP route registration"]
-  pkg_connection["connection"]
-  pkg_modules["modules"]
-  pkg_hmr["hmr"]
+  pkg_client_connection_web["client-connection-web"]
+  pkg_client_modules_web["client-modules-web"]
+  pkg_client_hmr["client-hmr"]
+  pkg_client_modules["client-modules"]
+  svc_clientModuleDelivery["ctx.clientModuleDelivery<br/>Client bundle delivery seam"]
+  pkg_client_modules_desktop["client-modules-desktop"]
   svc_clientModules["ctx.clientModules<br/>Client plugin graph host"]
+  pkg_client_connection_desktop["client-connection-desktop"]
+  pkg_client_connection["client-connection"]
+  svc_connection["ctx.connection<br/>Carrier-neutral Connection registry"]
+  pkg_client_runtime["client-runtime"]
+  svc_connectionTransport["ctx.connectionTransport<br/>Connection carrier seam"]
+  svc_desktopHostBridge["ctx.desktopHostBridge<br/>Sidecar-to-Electron capability bridge"]
   pkg_workflow["workflow"]
   svc_workflowEngine["ctx.workflowEngine<br/>Workflow script engine"]
   pkg_workflow_worker_thread["workflow-worker-thread"]
@@ -201,12 +220,20 @@ flowchart LR
   pkg_agent_loop --> svc_agentLoop
   pkg_agent_presets --> svc_agentPresets
   pkg_api_gateway --> svc_typertGateway
-  pkg_apiproxy --> svc_apiProxy
   pkg_approval --> svc_approval
   pkg_attachment --> svc_attachments
   pkg_attachment_local --> svc_attachments
   pkg_bash_local --> svc_shell
   pkg_bash_sandbox --> svc_shell
+  pkg_client_connection --> svc_connection
+  pkg_client_connection --> svc_connectionTransport
+  pkg_client_connection_desktop --> svc_connectionTransport
+  pkg_client_connection_desktop --> svc_desktopHostBridge
+  pkg_client_connection_web --> svc_connectionTransport
+  pkg_client_modules --> svc_clientModuleDelivery
+  pkg_client_modules --> svc_clientModules
+  pkg_client_modules_desktop --> svc_clientModuleDelivery
+  pkg_client_modules_web --> svc_clientModuleDelivery
   pkg_code_runtime --> svc_codeRuntime
   pkg_code_runtime_worker --> svc_codeRuntime
   pkg_commands --> svc_commands
@@ -217,15 +244,20 @@ flowchart LR
   pkg_cordis_host_runner --> svc_dynamicCordisRunner
   pkg_credentials --> svc_credentials
   pkg_credentials_local --> svc_credentials
-  pkg_directory_picker --> svc_directoryPicker
-  pkg_directory_picker_browse --> svc_directoryPicker
-  pkg_directory_picker_native --> svc_directoryPicker
   pkg_e2b --> svc_e2b
   pkg_fs --> svc_fs
   pkg_fs_e2b --> svc_fs
   pkg_fs_local --> svc_fs
   pkg_fs_sandbox --> svc_fs
   pkg_goal --> svc_goals
+  pkg_host_apiproxy --> svc_apiProxy
+  pkg_host_directory_picker --> svc_directoryPicker
+  pkg_host_directory_picker_browse --> svc_directoryPicker
+  pkg_host_directory_picker_electron --> svc_directoryPicker
+  pkg_host_directory_picker_native --> svc_directoryPicker
+  pkg_host_webserver --> svc_webServer
+  pkg_host_workspace_files --> svc_workspaceFiles
+  pkg_host_workspace_registration --> svc_workspaceRegistration
   pkg_invariants --> svc_invariants
   pkg_jobs --> svc_jobs
   pkg_jobs_local --> svc_jobs
@@ -236,7 +268,6 @@ flowchart LR
   pkg_lsp --> svc_lsp
   pkg_lsp_local --> svc_lsp
   pkg_message_feedback --> svc_messageFeedback
-  pkg_modules --> svc_clientModules
   pkg_permission_presets --> svc_permissionPresets
   pkg_plan_mode --> svc_planMode
   pkg_pwsh_local --> svc_shell
@@ -279,7 +310,11 @@ flowchart LR
   pkg_subagent_spawn_in_process --> svc_subagents
   pkg_subprocess --> svc_subprocess
   pkg_subprocess_e2b --> svc_subprocess
+  pkg_subprocess_guardian --> svc_subprocess
   pkg_subprocess_local --> svc_subprocess
+  pkg_subprocess_pty --> svc_subprocessPty
+  pkg_subprocess_pty_e2b --> svc_subprocessPty
+  pkg_subprocess_pty_local --> svc_subprocessPty
   pkg_system_prompt --> svc_systemPrompt
   pkg_terminal --> svc_terminals
   pkg_terminal_bash --> svc_terminals
@@ -292,7 +327,6 @@ flowchart LR
   pkg_web_search_deepseek --> svc_web
   pkg_web_search_exa --> svc_web
   pkg_web_search_perplexity --> svc_web
-  pkg_webserver --> svc_webServer
   pkg_workflow --> svc_workflowEngine
   pkg_workflow_worker_thread --> svc_workflowEngine
   pkg_workspace --> svc_workspaceRegistry
@@ -302,22 +336,30 @@ flowchart LR
   svc_agents --> pkg_acp
   svc_agents --> pkg_agent_loop
   svc_agents --> pkg_subagent_inprocess
-  svc_apiProxy --> pkg_connection
+  svc_apiProxy --> pkg_client_connection
   svc_approval --> pkg_tool_bash
   svc_approval --> pkg_tools
   svc_attachments --> pkg_host_runtime
   svc_attachments --> pkg_llm_pi_ai
-  svc_clientModules --> pkg_hmr
+  svc_clientModuleDelivery --> pkg_client_modules
+  svc_clientModules --> pkg_client_connection_desktop
+  svc_clientModules --> pkg_client_hmr
   svc_codeRuntime --> pkg_tools
   svc_compaction --> pkg_compaction_basic
+  svc_connection --> pkg_api_gateway
+  svc_connection --> pkg_client_runtime
+  svc_connectionTransport --> pkg_client_connection
   svc_cordisInspect --> pkg_tool_cordis
   svc_credentials --> pkg_apiproxy
   svc_credentials --> pkg_llm_deepseek
   svc_credentials --> pkg_llm_pi_ai
-  svc_directoryPicker --> pkg_apiproxy
+  svc_desktopHostBridge --> pkg_host_directory_picker_electron
+  svc_directoryPicker --> pkg_host_apiproxy
+  svc_directoryPicker --> pkg_host_workspace_registration
   svc_dynamicCordisRunner --> pkg_tool_cordis
   svc_e2b --> pkg_fs_e2b
   svc_e2b --> pkg_subprocess_e2b
+  svc_e2b --> pkg_subprocess_pty_e2b
   svc_fs --> pkg_tool_fs
   svc_invariants --> pkg_agent
   svc_invariants --> pkg_agent_loop
@@ -379,7 +421,7 @@ flowchart LR
   svc_subprocess --> pkg_subagent_acp
   svc_subprocess --> pkg_subagent_claude_code
   svc_subprocess --> pkg_subagent_codex
-  svc_subprocess --> pkg_terminal_bash
+  svc_subprocessPty --> pkg_terminal_bash
   svc_systemPrompt --> pkg_agent_loop
   svc_systemPrompt --> pkg_tool_fs
   svc_systemPrompt --> pkg_tool_terminal
@@ -402,9 +444,9 @@ flowchart LR
   svc_typert --> pkg_typert_loader
   svc_userQuestions --> pkg_tool_ask_user
   svc_web --> pkg_tool_web
-  svc_webServer --> pkg_connection
-  svc_webServer --> pkg_hmr
-  svc_webServer --> pkg_modules
+  svc_webServer --> pkg_client_connection_web
+  svc_webServer --> pkg_client_hmr
+  svc_webServer --> pkg_client_modules_web
   svc_workflowEngine --> pkg_tool_ralph
   svc_workflowEngine --> pkg_tool_workflow
   svc_workspaceRegistry --> pkg_apiproxy
@@ -429,6 +471,8 @@ flowchart LR
 | `ctx.storageDomain` | `core` | [`storage-domain`](../packages/storage/storage-domain) | - | [`workspace`](../packages/workspace/workspace), [`message-feedback`](../packages/feedback/message-feedback) | - | 等待所有已配置后端就绪，然后将领域形态发布为一个受生命周期约束的服务，用于类型化持久状态。 |
 | `ctx.messageFeedback` | `core` | [`message-feedback`](../packages/feedback/message-feedback) | - | - | - | 拥有本地逐 assistant 消息反馈、生命周期与目标校验、逐条目 compare-and-set 及 Host 一元 Remote 契约，且不进入 Session 历史或遥测。 |
 | `ctx.workspaceRegistry` | `core` | [`workspace`](../packages/workspace/workspace) | - | `apiproxy` | - | 通过领域设施拥有带 WorkspaceId 品牌类型的记录；稳定的 sessionIds 账户驱动 Host RPC 与 GUI 投影。 |
+| `ctx.workspaceFiles` | `core` | [`host-workspace-files`](../packages/host/workspace-files) | - | - | - | Typert Remote 接受 Host 签发的 WorkspaceId 与相对标识，随后通过选定的文件系统 provider 强制执行有界列举、文本读取、包含关系与 compare-and-swap 保存。 |
+| `ctx.workspaceRegistration` | `core` | [`host-workspace-registration`](../packages/host/workspace-registration) | - | - | - | 原生选择器 Remote 在 Host 内部消费所选路径，只返回注册后的 Workspace 投影；renderer request 不携带具有权限的路径。 |
 | `ctx.sessionQuery` | `seam` | [`session-query`](../packages/session-query/session-query) | [`session-query-sqlite`](../packages/session-query/session-query-sqlite) | [`session-reference`](../packages/context/session-reference), [`tool-session-query`](../packages/session-query/tool-session-query) | - | 该接口提供精确读取、过滤和追踪；具体后端还提供全文协调、排序、摘要片段和游标世代，而模型消费方负责工作区权限与不含游标的渲染。 |
 | `ctx.sessionReferenceResolver` | `core` | [`session-reference`](../packages/context/session-reference) | - | - | - | 将当前表层中有界的对话快照投影为持久但不可信的消息上下文；Host 适配器负责提及语法。 |
 | `ctx.sessionTitle` | `seam` | [`session-title`](../packages/session/session-title) | [`session-title-first-prompt-llm`](../packages/session/session-title-first-prompt-llm), [`session-title-all-prompts-llm`](../packages/session/session-title-all-prompts-llm) | - | - | 负责确定性回退、最新标题折叠区，以及唯一的可选异步提供方注册。 |
@@ -445,8 +489,9 @@ flowchart LR
 | `ctx.agentDefaultModel` | `core` | [`agent-default-model`](../packages/core/agent-default-model) | - | [`headless`](../packages/bundle/headless), [`host-apiproxy`](../packages/host/apiproxy) | - | 通过 settings 分层默认 `ModelSelection`，让直接入口与 Host 支撑的 Agent 入口共享同一个状态所有者。 |
 | `ctx.agentLoop` | `bundle` | [`agent-loop`](../packages/core/agent-loop) | - | [`agent-spine-demo`](../packages/examples/agent-spine-demo) | - | 唯一的具体循环插件；扩展包依赖 dsh-agent 的事件和服务，而不依赖此包。 |
 | `ctx.goals` | `core` | [`goal`](../packages/goal/goal) | - | - | - | 从会话日志折叠带修订版本的目标状态，并将实时延续激活保留在进程本地。 |
-| `ctx.e2b` | `core` | [`e2b`](../packages/e2b/e2b) | - | [`fs-e2b`](../packages/e2b/fs-e2b), [`subprocess-e2b`](../packages/e2b/subprocess-e2b) | - | 拥有一个共享的 E2B SDK 句柄、远程工作目录和最终沙箱处置，使两个基础 E2B 提供方处于同一个 Linux 运行时中。 |
-| `ctx.subprocess` | `seam` | [`subprocess`](../packages/subprocess/subprocess) | [`subprocess-local`](../packages/subprocess/subprocess-local), [`subprocess-e2b`](../packages/e2b/subprocess-e2b) | [`bash-local`](../packages/shell/bash-local), [`bash-sandbox`](../packages/shell/bash-sandbox), [`terminal-bash`](../packages/terminal/terminal-bash), [`lsp-stdio`](../packages/lsp/lsp-stdio), [`subagent-acp`](../packages/subagent/subagent-acp), [`subagent-codex`](../packages/subagent/subagent-codex), [`subagent-claude-code`](../packages/subagent/subagent-claude-code) | - | Bash 执行器、PTY shell 后端、LSP Host，以及进程外 ACP、Codex 和 Claude Code subagent 后端都通过 ctx.subprocess 执行 spawn；该服务负责进程坐标、进程树／会话生命周期、stdio 处置、终端机制和 kill 升级。 |
+| `ctx.e2b` | `core` | [`e2b`](../packages/e2b/e2b) | - | [`fs-e2b`](../packages/e2b/fs-e2b), [`subprocess-e2b`](../packages/e2b/subprocess-e2b), [`subprocess-pty-e2b`](../packages/e2b/subprocess-pty-e2b) | - | 拥有一个共享的 E2B SDK 句柄、远程工作目录和最终沙箱处置，使两个基础 E2B 提供方处于同一个 Linux 运行时中。 |
+| `ctx.subprocess` | `seam` | [`subprocess`](../packages/subprocess/subprocess) | [`subprocess-local`](../packages/subprocess/subprocess-local), [`subprocess-e2b`](../packages/e2b/subprocess-e2b), [`subprocess-guardian`](../packages/subprocess/subprocess-guardian) | [`bash-local`](../packages/shell/bash-local), [`bash-sandbox`](../packages/shell/bash-sandbox), [`lsp-stdio`](../packages/lsp/lsp-stdio), [`subagent-acp`](../packages/subagent/subagent-acp), [`subagent-codex`](../packages/subagent/subagent-codex), [`subagent-claude-code`](../packages/subagent/subagent-claude-code) | - | 通用子进程消费方使用异步 spawn、显式 stdio 处置、收集输出读取器、以进程树为范围的终止和有界 join。桌面组合选择 guardian provider，使 Electron main 拥有这些进程树。 |
+| `ctx.subprocessPty` | `seam` | [`subprocess-pty`](../packages/subprocess/subprocess-pty) | [`subprocess-pty-local`](../packages/subprocess/subprocess-pty-local), [`subprocess-pty-e2b`](../packages/e2b/subprocess-pty-e2b) | [`terminal-bash`](../packages/terminal/terminal-bash) | - | PTY 分配、字节传输、前台进程组、信号与终端会话清理和通用子进程 spawn 保持分离。 |
 | `ctx.shell` | `seam` | [`shell`](../packages/shell/shell) | [`bash-local`](../packages/shell/bash-local), [`bash-sandbox`](../packages/shell/bash-sandbox), [`pwsh-local`](../packages/shell/pwsh-local) | [`tool-bash`](../packages/shell/tool-bash), [`tool-pwsh`](../packages/shell/tool-pwsh), [`hooks-claude-code`](../packages/hooks/hooks-claude-code), [`hooks-codex`](../packages/hooks/hooks-codex) | - | 面向模型的 shell 工具和钩子桥接消费此 seam；沙箱、远程或 PowerShell 执行器可以替换 bash-local，而无需改动这些消费方。 |
 | `ctx.shellEnv` | `core` | [`shell-env`](../packages/shell/shell-env) | - | [`tool-bash`](../packages/shell/tool-bash), [`tool-pwsh`](../packages/shell/tool-pwsh) | - | 插件声明限定于 effect 作用域的 DSH_* 事实；每个 shell 工具在每次执行时收集一份可信快照，其执行器据此重建命名空间。 |
 | `ctx.terminals` | `seam` | [`terminal`](../packages/terminal/terminal) | [`terminal-bash`](../packages/terminal/terminal-bash) | [`tool-terminal`](../packages/terminal/tool-terminal) | - | 注册表负责精确到 Agent 的会话身份和清理；后端负责终端机制，tool-terminal 则提供限定于所有者作用域的模型接口。 |
@@ -461,12 +506,16 @@ flowchart LR
 | `ctx.jobs` | `seam` | [`jobs`](../packages/jobs/jobs) | [`jobs-local`](../packages/jobs/jobs-local) | [`tool-bash`](../packages/shell/tool-bash), [`tool-terminal`](../packages/terminal/tool-terminal), [`tool-subagent`](../packages/subagent/tool-subagent), [`tool-jobs`](../packages/jobs/tool-jobs) | - | 生产方（后台 bash、PTY 发送和 subagent 委派）登记正在运行的工作；tool-jobs 是面向模型的控制器，用于读取、列出和终止这些工作；jobs-local 是进程本地注册表。 |
 | `ctx.web` | `seam` | [`web`](../packages/web/web) | [`web-search-exa`](../packages/web/web-search-exa), [`web-search-perplexity`](../packages/web/web-search-perplexity), [`web-search-deepseek`](../packages/web/web-search-deepseek), [`web-fetch-http`](../packages/web/web-fetch-http) | [`tool-web`](../packages/web/tool-web) | - | 搜索和抓取提供方注册到同一个 ctx.web seam；tool-web 负责稳定的面向模型名称。 |
 | `ctx.spillStore` | `seam` | [`spill`](../packages/spill/spill) | [`spill-local`](../packages/spill/spill-local) | [`spill-policy`](../packages/spill/spill-policy) | - | 后端保存过大的工具文本，并返回面向模型的定位信息和取回提示；spill-policy 是 tools/post-execute 消费方，负责决定何时 spill。 |
-| `ctx.directoryPicker` | `seam` | `directory-picker` | `directory-picker-native`, `directory-picker-browse` | `apiproxy` | - | 带判别标记的交互能力：原生后端在 Host 显示设备上打开一个操作系统选择器，浏览后端为应用内浏览器提供列表与创建原语；双端后端通过其浏览器侧填充 ui-workspace 目录流程的 slot（不通过协议发布）。 |
-| `ctx.webServer` | `core` | `webserver` | - | `connection`, `modules`, `hmr` | - | 普通的 node:http 载体：具名路由注册表、索引转换 tap，以及静态 dist 回退；Web 传输插件注册自己的路由。 |
-| `ctx.clientModules` | `core` | `modules` | - | `hmr` | - | 通过增量 `dsh.client` 扫描组合 __DSH_BOOT__ 入口图，提供插件组合包，并通知重建／图变更订阅方。 |
+| `ctx.directoryPicker` | `seam` | [`host-directory-picker`](../packages/host/directory-picker) | [`host-directory-picker-native`](../packages/host/directory-picker-native), [`host-directory-picker-browse`](../packages/host/directory-picker-browse), [`host-directory-picker-electron`](../packages/host/directory-picker-electron) | [`host-apiproxy`](../packages/host/apiproxy), [`host-workspace-registration`](../packages/host/workspace-registration) | - | 带判别标记的交互能力：原生后端在 Host 显示设备上打开一个操作系统选择器，浏览后端为应用内浏览器提供列表与创建原语。桌面组合通过 Host 发起的 Electron bridge 转发选择器。 |
+| `ctx.webServer` | `core` | [`host-webserver`](../packages/host/webserver) | - | [`client-connection-web`](../packages/client/connection-web), [`client-modules-web`](../packages/client/modules-web), [`client-hmr`](../packages/client/hmr) | - | 普通的 node:http 载体：具名路由注册表、索引转换 tap，以及静态 dist 回退；Web 传输插件注册自己的路由。 |
+| `ctx.clientModuleDelivery` | `seam` | [`client-modules`](../packages/client/modules) | [`client-modules-web`](../packages/client/modules-web), [`client-modules-desktop`](../packages/client/modules-desktop) | [`client-modules`](../packages/client/modules) | - | 必须且只能有一个 provider 为共享的 Host 生成 Client 插件图分配带 revision 的 bundle URL，并安装物理交付。 |
+| `ctx.clientModules` | `core` | [`client-modules`](../packages/client/modules) | - | [`client-hmr`](../packages/client/hmr), [`client-connection-desktop`](../packages/client/connection-desktop) | - | 通过增量 `dsh.client` 扫描组合 __DSH_BOOT__ 入口图，为 bundle 计算哈希，并在不选择物理载体的前提下通知重建与图变更订阅方。 |
+| `ctx.connection` | `core` | [`client-connection`](../packages/client/connection) | - | [`api-gateway`](../packages/api/gateway), [`client-runtime`](../packages/client/runtime) | - | Host 负责逻辑 RPC 注册、目标解析、响应交付和下行 source；Client 负责一个稳定句柄与重连 generation 状态。 |
+| `ctx.connectionTransport` | `seam` | [`client-connection`](../packages/client/connection) | [`client-connection-web`](../packages/client/connection-web), [`client-connection-desktop`](../packages/client/connection-desktop) | [`client-connection`](../packages/client/connection) | - | 必须且只能有一个 provider 把 Web route 或 child IPC handler 附加到同一个逻辑 Host router，并提供相应的 Client transport。 |
+| `ctx.desktopHostBridge` | `core` | [`client-connection-desktop`](../packages/client/connection-desktop) | - | [`host-directory-picker-electron`](../packages/host/directory-picker-electron) | - | 闭合的 Host-initiated method map 允许 Node sidecar 请求 Electron main 能力，同时不向 renderer 暴露这些 method。 |
 | `ctx.workflowEngine` | `seam` | [`workflow`](../packages/workflow/workflow) | [`workflow-worker-thread`](../packages/workflow/workflow-worker-thread) | [`tool-workflow`](../packages/workflow/tool-workflow), [`tool-ralph`](../packages/workflow/tool-ralph) | - | 每个上下文使用一个引擎，与 bash 相同，且没有具名提供方注册表；通用工作流与固定 Ralph 消费方启动运行，其中的 agent() 调用通过 ctx.subagents 扇出。 |
 | `ctx.lsp` | `seam` | [`lsp`](../packages/lsp/lsp) | `lsp-local` | [`tool-lsp`](../packages/lsp/tool-lsp) | - | 提供方注册与选择，加上恰好四种操作的标准化查询执行；该 seam 不提供协议逃生口，后端必须转换为标准化请求和结果。 |
-| `ctx.apiProxy` | `core` | `apiproxy` | - | `connection` | - | 与传输无关的 Host 网关接口：它分派浏览器 API 调用，每条打开的 Host 流自行订阅转发事件，而不是由广播方法向其推送。 |
+| `ctx.apiProxy` | `core` | [`host-apiproxy`](../packages/host/apiproxy) | - | [`client-connection`](../packages/client/connection) | - | 与传输无关的 Host 网关接口：它分派浏览器 API 调用，每条打开的 Host 流自行订阅转发事件，而不是由广播方法向其推送。 |
 | `ctx.dynamicCordisRunner` | `core` | [`cordis-host-runner`](../packages/extensions/cordis-host-runner) | - | [`tool-cordis`](../packages/extensions/tool-cordis) | - | 拥有内存定义注册表、Host 半的 vm 沙箱和 request-run 往返流程；浏览器页面通过其 Remote 命名空间在线访问同一服务。 |
 | `ctx.cordisInspect` | `core` | [`cordis-host-runner`](../packages/extensions/cordis-host-runner) | - | [`tool-cordis`](../packages/extensions/tool-cordis) | - | 注册 Host inspect 提供方、镜像 Client 提供方 manifest，并通过动态 Cordis 传输路由 Client 查询。 |
 

@@ -1,9 +1,9 @@
 /**
  * Service Definition for the subprocess capability seam (`ctx.subprocess`): execution-world executable lookup,
- * fully specified managed process trees with raw or
- * collected stdio, and one terminal-process primitive. Command defaulting,
- * shell semantics, deadlines, protocol framing, terminal readiness, and
- * presentation belong to consumers. The local implementation lives in
+ * fully specified managed process trees with raw or collected stdio. Command
+ * defaulting, shell semantics, deadlines, protocol framing, and presentation
+ * belong to consumers. The optional terminal-process primitive lives in
+ * `@deepseek-ai/dsh-subprocess-pty`; the local generic implementation lives in
  * `@deepseek-ai/dsh-subprocess-local`.
  * @module @deepseek-ai/dsh-subprocess
  */
@@ -11,7 +11,6 @@
 import { Context, Service } from '@deepseek-ai/cordis'
 import { DSH_ENV_PREFIX } from './types.ts'
 import type { SubprocessHandle, SubprocessSpawnSpec } from './types.ts'
-import type { SubprocessTerminalHandle, SubprocessTerminalSpawnSpec } from './types.ts'
 
 export { DSH_ENV_PREFIX } from './types.ts'
 export type {
@@ -28,10 +27,6 @@ export type {
   SubprocessSpawnSpec,
   SubprocessStdinMode,
   SubprocessStdio,
-  SubprocessTerminalForeground,
-  SubprocessTerminalHandle,
-  SubprocessTerminalSignal,
-  SubprocessTerminalSpawnSpec,
 } from './types.ts'
 
 /**
@@ -80,8 +75,10 @@ declare module '@deepseek-ai/cordis' {
  * Implementations must honor these semantics:
  * - Executable paths belong to one execution world shared with the mounted
  *   filesystem provider.
- * - {@link spawn} returns immediately with a live handle; `done` resolves at
- *   process close with exit facts and rejects only for spawn-level failures.
+ * - {@link spawn} resolves only after process creation has produced a real
+ *   process id and the provider owns the process tree. It rejects when either
+ *   condition cannot be established. `done` resolves at process close with
+ *   exit facts and rejects only for failures after creation succeeds.
  * - Collect-mode readers are offset-based and non-consuming, so independent
  *   readers never consume one another's output; lossy reads report truncation
  *   and the spill file holding the complete stream when one exists. Piped
@@ -93,11 +90,6 @@ declare module '@deepseek-ai/cordis' {
  *   quiescence.
  * - Disposal of the service terminates all still-running managed processes
  *   and awaits their exit.
- * - {@link spawnTerminal} owns terminal allocation, text transport,
- *   foreground groups, signalling, and whole-session quiescence behind one
- *   awaited termination method; readiness and persistent-shell policy stay
- *   in the PTY consumer. Its output stream ends after queued terminal output
- *   when the top-level process exits.
  */
 export abstract class SubprocessRuntime extends Service {
   constructor(ctx: Context) {
@@ -125,18 +117,9 @@ export abstract class SubprocessRuntime extends Service {
    * Start one managed child process from a fully-specified spec; this seam
    * applies no defaults.
    * @param spec - argv, directory, stdio dispositions, grace, cancellation, and environment.
-   * @returns the live process handle (streams/readers, signalling, outcome promise).
+   * @returns the live process handle after its real process id and provider ownership are established.
    */
-  abstract spawn(spec: SubprocessSpawnSpec): SubprocessHandle
-
-  /**
-   * Allocate a real terminal and start one owned process session. This is the
-   * only non-pipe process primitive: implementations own terminal byte I/O,
-   * foreground groups, signals, and complete session-tree cleanup.
-   * @param spec - fully specified argv, cwd, environment, dimensions, grace, and allocation cancellation.
-   * @returns the live terminal handle after allocation succeeds.
-   */
-  abstract spawnTerminal(spec: SubprocessTerminalSpawnSpec): Promise<SubprocessTerminalHandle>
+  abstract spawn(spec: SubprocessSpawnSpec): Promise<SubprocessHandle>
 }
 
 export default SubprocessRuntime

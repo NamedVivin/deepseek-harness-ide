@@ -36,6 +36,8 @@ export interface ConnectionSpec {
   readonly killGraceMs: number
   /** Static answer to every `workspace/configuration` item. */
   readonly configuration: unknown
+  /** Provider-lifetime cancellation of process creation and ownership. */
+  readonly signal?: AbortSignal
 }
 
 interface Pending {
@@ -56,7 +58,16 @@ export type ConnectionWriter = (
 ) => void
 
 /** Spawn one subprocess for this connection (the provider passes `ctx.subprocess.spawn`). */
-export type ConnectionSpawner = (spec: SubprocessSpawnSpec) => SubprocessHandle
+export type ConnectionSpawner = (spec: SubprocessSpawnSpec) => Promise<SubprocessHandle>
+
+type PipedSubprocessHandle = SubprocessHandle & {
+  readonly stdin: NonNullable<SubprocessHandle['stdin']>
+  readonly stdout: NonNullable<SubprocessHandle['stdout']>
+}
+
+function isPipedSubprocessHandle(handle: SubprocessHandle): handle is PipedSubprocessHandle {
+  return handle.stdin !== undefined && handle.stdout !== undefined
+}
 
 const writeConnectionMessage: ConnectionWriter = (stdin, message, done) => {
   stdin.write(encodeMessage(message), done)
@@ -64,7 +75,7 @@ const writeConnectionMessage: ConnectionWriter = (stdin, message, done) => {
 
 /** A live JSON-RPC endpoint bound to one child process. */
 export class LspConnection {
-  private readonly handle: SubprocessHandle
+  private readonly handle: PipedSubprocessHandle
   private readonly stdin: Writable
   private readonly decoder: MessageDecoder
   private readonly pending = new Map<number, Pending>()
@@ -73,15 +84,9 @@ export class LspConnection {
   /** Set once the process has fully exited; the instance awaits it during teardown. */
   readonly closed: Promise<void>
 
-  /**
-   * @param spec - how to launch the server and answer its config requests.
-   * @param spawner - the subprocess seam's spawn (the provider passes `ctx.subprocess.spawn`).
-   * @param onServerRequest - answers a server→client request; rejects to send an error response.
-   * @param writer - message writer; tests inject callback failures without relying on OS pipe races.
-   */
-  constructor(
+  private constructor(
     spec: ConnectionSpec,
-    spawner: ConnectionSpawner,
+    handle: PipedSubprocessHandle,
     private readonly onServerRequest: (method: string, params: unknown) => Promise<unknown>,
     private readonly writer: ConnectionWriter = writeConnectionMessage,
   ) {
@@ -89,24 +94,7 @@ export class LspConnection {
     // stdin/stdout are piped protocol streams this endpoint frames itself;
     // stderr is a collected diagnostic tail (no spill — the bounded tail IS
     // the contract). The seam owns detachment and tree-scoped signalling.
-    this.handle = spawner({
-      argv: [spec.command, ...spec.args],
-      cwd: spec.cwd,
-      stdio: {
-        stdin: 'pipe',
-        stdout: 'pipe',
-        stderr: { maxBytes: spec.maxStderrBytes },
-      },
-      graceMs: spec.killGraceMs,
-      // The seam merges explicit config entries after its ambient scrub, so a
-      // configured credential or DSH_* fact reaches the child deliberately.
-      env: spec.env,
-    })
-    /* v8 ignore start -- 'pipe' dispositions expose both streams by the seam contract; defensive. */
-    if (this.handle.stdin === undefined || this.handle.stdout === undefined) {
-      throw new Error('lsp-stdio: subprocess implementation dropped a piped protocol stream')
-    }
-    /* v8 ignore stop */
+    this.handle = handle
     this.stdin = this.handle.stdin
     this.closed = new Promise<void>((resolve) => {
       const close = (): void => {
@@ -118,8 +106,7 @@ export class LspConnection {
         resolve()
       }
       this.handle.done.then(close, (error: unknown) => {
-        // A spawn-level failure never produces a close event; the rejection is
-        // the fatal cause and the close boundary at once.
+        // A post-creation monitoring failure is the fatal cause and close boundary at once.
         this.fail(asError(error))
         close()
       })
@@ -131,7 +118,46 @@ export class LspConnection {
     this.handle.stdout.on('data', (chunk: Buffer) => { this.onStdout(chunk) })
   }
 
-  /** The child's pid, or `-1` when the spawn produced no pid (so signalling is a no-op). */
+  /**
+   * Create the owned server process before publishing its JSON-RPC endpoint.
+   * @param spec - how to launch the server and answer its config requests.
+   * @param spawner - the subprocess service's asynchronous spawn operation.
+   * @param onServerRequest - answers a server→client request; rejects to send an error response.
+   * @param writer - message writer; tests inject callback failures without relying on OS pipe races.
+   * @returns the live endpoint after process creation and pipe validation.
+   */
+  static async create(
+    spec: ConnectionSpec,
+    spawner: ConnectionSpawner,
+    onServerRequest: (method: string, params: unknown) => Promise<unknown>,
+    writer: ConnectionWriter = writeConnectionMessage,
+  ): Promise<LspConnection> {
+    const handle = await spawner({
+      argv: [spec.command, ...spec.args],
+      cwd: spec.cwd,
+      stdio: {
+        stdin: 'pipe',
+        stdout: 'pipe',
+        stderr: { maxBytes: spec.maxStderrBytes },
+      },
+      graceMs: spec.killGraceMs,
+      signal: spec.signal,
+      // The seam merges explicit config entries after its ambient scrub, so a
+      // configured credential or DSH_* fact reaches the child deliberately.
+      env: spec.env,
+    })
+    /* v8 ignore start -- 'pipe' dispositions expose both streams by the seam contract; defensive. */
+    if (!isPipedSubprocessHandle(handle)) {
+      handle.terminate()
+      await handle.waitForExit()
+      await handle.done.catch(() => undefined)
+      throw new Error('lsp-stdio: subprocess implementation dropped a piped protocol stream')
+    }
+    /* v8 ignore stop */
+    return new LspConnection(spec, handle, onServerRequest, writer)
+  }
+
+  /** The positive process id of the provider-owned server tree. */
   get pid(): number {
     return this.handle.pid
   }

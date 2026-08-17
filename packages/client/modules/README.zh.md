@@ -8,7 +8,7 @@
 
 解析分支顺序（`import(specifier)`）：平台种子词 → 外壳实例；记忆化记录 → 表层；外壳自身的静态注册表（`registerStatic`，app-shell）→ 模块；已注册 factory → 物化；模块图记录（`window.__DSH_BOOT__`）→ 加载外部 classic script + 物化；其他情况一律抛出异常。这是构建时 bundle 纯度门禁的运行时镜像。交给 factory 的同步 `require` 采用相同顺序，但不含异步加载分支，并把观察到的边记录到模块记录中。`prefetch` 是第一阶段到达钩子（只加载脚本并注册 factory；并发调用共享一个进行中的任务）；`invalidate` 会丢弃 factory 与物化记录，使下一次 prefetch/import 重新加载脚本；它是 HMR（热模块替换）钩子。
 
-Node 侧会扫描已启用的 Loader 配置项以发现 web `dsh.client` 包，解析每个 `exports["./client"]`，把构建后的 bundle 哈希写入启动图，并通过 `/plugins` 提供该文件及其 sourcemap。源码启动会把宿主侧导入映射到 TypeScript 源码，但仍消费这一构建后的客户端导出；缺失文件共享一条构建说明，随后以包／路径列表列出各项，而无关的文件系统错误仍是独立故障。
+Node 侧会扫描已启用的 Loader 配置项以发现可在 renderer 运行的 `dsh.client` 包，解析每个 `exports["./client"]`，并把构建后的 bundle 哈希写入共享启动图。恰好一个 `ctx.clientModuleDelivery` provider 为每一行提供物理 URL 并发布资产：`modules-web` 持有 `/plugins` 与 index 注入，`modules-desktop` 持有不可变 `dsh-app://` 映射。现有 `platform: "web"` 声明表示兼容浏览器运行时，无论载体是 HTTP 还是 Electron。源码启动会把宿主侧导入映射到 TypeScript 源码，但仍消费这一构建后的客户端导出；缺失文件共享一条构建说明，随后以包／路径列表列出各项，而无关的文件系统错误仍是独立故障。只需校验启动图的 Node 载体导入纯 ESM 的 `./manifest` 子入口；`./client` 是浏览器惰性 CJS 插件产物，不是 Host 模块。
 
 ## 模型体验
 

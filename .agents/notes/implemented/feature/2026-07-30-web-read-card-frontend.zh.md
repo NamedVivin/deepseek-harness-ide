@@ -44,7 +44,7 @@ Web 聊天里的读取行现在常驻承载文件内容，是相对纯摘要行�
 
 `packages/client/ui-tool/tests/read-card.client.spec.tsx` 固定每个渲染点的接线：`readCardModel` 的派生与每条 null 分支（运行中读取、无视图、通用视图、未知卡片）、结果标题替换化简后的路径、路径相对工作区的化简、冻结行数组的复制而非别名；`GenericToolCard` 回退中与 keyed `ReadRow` 中的常驻卡片（外加其路径链接打开宿主、其 running/error/stopped 状态、以及其 `read` 键注册）；还有面板 Output 区段以全高渲染读取卡片同时保留 JSON Input 区段，含运行中读取占位与非读取摊平 pre 两条分支。该文件位于覆盖 `exclude` 列表（`ui-tool/src/*`），因此不承受门槛压力。
 
-`packages/client/connection/src/client/fixture.ts` 中的 fixture（测试前置数据）增加轮次 66，一次 `read` 调用，其结果视图是窗口读取（行号从文件行 41 起、`totalLines` 180、`ts` 提示），使 built-boot 快照和实时 `?fixture` 服务器展示带行号、高亮和计数提示的读取卡片。它命名为 `read` 以驱动 keyed `ReadRow`。轮次 64 的 `run_code` 样例中的嵌套读取子派发并不驱动渲染点回退读取卡片：`session.ts` 把它们折叠为 `resultView: null`，因此它们只覆盖回退行的通用行形状，而非回退行内的读取卡片；回退行读取卡片由 `read-card.spec.tsx` 的 `web_fetch` 用例钉住。轮次 66 排在 todo 轮次（现为 67）之前，与终端样例同因：常驻计划在下一次 `turn/start` 退场。
+`packages/client/connection-web/src/client/fixture.ts` 中的 fixture（测试前置数据）增加轮次 66，一次 `read` 调用，其结果视图是窗口读取（行号从文件行 41 起、`totalLines` 180、`ts` 提示），使 built-boot 快照和实时 `?fixture` 服务器展示带行号、高亮和计数提示的读取卡片。它命名为 `read` 以驱动 keyed `ReadRow`。轮次 64 的 `run_code` 样例中的嵌套读取子派发并不驱动渲染点回退读取卡片：`session.ts` 把它们折叠为 `resultView: null`，因此它们只覆盖回退行的通用行形状，而非回退行内的读取卡片；回退行读取卡片由 `read-card.spec.tsx` 的 `web_fetch` 用例钉住。轮次 66 排在 todo 轮次（现为 67）之前，与终端样例同因：常驻计划在下一次 `turn/start` 退场。
 
 ## Related
 
