@@ -36,6 +36,7 @@ apps/desktop/generated/
 apps/desktop/renderer/
 apps/desktop/out/
 .artifacts/
+.dsh-build/
 .playwright-mcp/
 .orig
 .worktrees/

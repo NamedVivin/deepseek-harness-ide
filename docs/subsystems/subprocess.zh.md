@@ -2,7 +2,7 @@
 
 [English](subprocess.md) | 中文
 
-普通进程与终端会话是相互独立的能力 seam。[`dsh-subprocess`](../../packages/subprocess/subprocess) 定义用于可执行文件查找和受管管道进程树的 `ctx.subprocess`；[`dsh-subprocess-pty`](../../packages/subprocess/subprocess-pty) 定义用于控制终端与 provider 可观察 session 清理的可选 `ctx.subprocessPty`。[bash 执行器家族](shell.md)使用收集模式批量输出，LSP 与 ACP 使用原始协议管道，PTY 后端使用可选终端服务。`ctx.subprocess` 拥有受管 `DSH_*` 环境命名空间、共享凭据清除（`scrubbedParentEnv`）与 `CollectedOutput` 词汇；[`dsh-subprocess-collector`](../../packages/subprocess/subprocess-collector) 提供 provider-neutral 的尾部、offset、spill 与 drain 行为。
+普通进程与终端会话是相互独立的能力 seam。[`dsh-subprocess`](../../packages/subprocess/subprocess) 定义用于可执行文件查找和受管管道进程树的 `ctx.subprocess`；[`dsh-subprocess-pty`](../../packages/subprocess/subprocess-pty) 定义用于控制终端与提供方可观察会话清理的可选 `ctx.subprocessPty`。[bash 执行器家族](shell.zh.md)使用收集模式批量输出，LSP 与 ACP 使用原始协议管道，PTY 后端使用可选终端服务。`ctx.subprocess` 拥有受管 `DSH_*` 环境命名空间、共享凭据清除（`scrubbedParentEnv`）与 `CollectedOutput` 词汇；[`dsh-subprocess-collector`](../../packages/subprocess/subprocess-collector) 提供提供方中立的尾部、偏移量、spill 与 drain 行为。
 
 源码：[`packages/subprocess/subprocess/src/types.ts`](../../packages/subprocess/subprocess/src/types.ts) 与 [`packages/subprocess/subprocess/src/index.ts`](../../packages/subprocess/subprocess/src/index.ts)
 
@@ -254,7 +254,7 @@ interface SubprocessOutcome {
 
 ## Cordis API
 
-Generated from source by `scripts/gen-cordis-catalog.ts` (verified fresh by `pnpm run verify-cordis-catalog` in doc-sync; regenerate with `pnpm run gen-cordis-catalog`) — this section is byte-identical in both language sides of the page. Signature blocks use a `ts cordis-catalog` fence and keep the original source JSDoc; dispatch modes are defined in the [primer](../cordis-primer.md#dispatch-modes), and the framework-inherited `ctx` API lives in [cordis-api/inherited.md](../cordis-api/inherited.md).
+Generated from source by `scripts/gen-cordis-catalog.ts` (verified fresh by `pnpm run verify-cordis-catalog` in doc-sync; regenerate with `pnpm run gen-cordis-catalog`) — the language sides differ only in locale-specific paired document paths. Signature blocks use a `ts cordis-catalog` fence and keep the original source JSDoc; dispatch modes are defined in the [primer](../cordis-primer.zh.md#dispatch-modes), and the framework-inherited `ctx` API lives in [cordis-api/inherited.md](../cordis-api/inherited.md).
 
 <a id="ctxe2b--e2bruntime"></a>
 
@@ -271,7 +271,7 @@ Creates one lazily consumable E2B SDK handle and deletes the sandbox at timeout 
 async getSandbox(): Promise<Sandbox>
 ```
 
-Source: [`packages/e2b/e2b/src/index.ts:74`](../../packages/e2b/e2b/src/index.ts)
+Source: [`packages/e2b/e2b/src/index.ts`](../../packages/e2b/e2b/src/index.ts)
 
 <a id="ctxsubprocess--subprocessruntime-abstract-seam"></a>
 
@@ -310,7 +310,7 @@ abstract resolveExecutable( command: string, env?: Readonly<Record<string, strin
 abstract spawn(spec: SubprocessSpawnSpec): Promise<SubprocessHandle>
 ```
 
-Source: [`packages/subprocess/subprocess/src/index.ts:94`](../../packages/subprocess/subprocess/src/index.ts)
+Source: [`packages/subprocess/subprocess/src/index.ts`](../../packages/subprocess/subprocess/src/index.ts)
 
 <a id="ctxsubprocesspty--subprocessptyruntime-abstract-seam"></a>
 
@@ -327,5 +327,5 @@ Optional PTY process service. Providers publish a handle only after terminal all
 abstract spawnTerminal(spec: SubprocessTerminalSpawnSpec): Promise<SubprocessTerminalHandle>
 ```
 
-Source: [`packages/subprocess/subprocess-pty/src/index.ts:31`](../../packages/subprocess/subprocess-pty/src/index.ts)
+Source: [`packages/subprocess/subprocess-pty/src/index.ts`](../../packages/subprocess/subprocess-pty/src/index.ts)
 <!-- END GENERATED cordis-surface -->

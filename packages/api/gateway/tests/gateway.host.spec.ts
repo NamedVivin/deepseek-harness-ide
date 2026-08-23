@@ -1,10 +1,13 @@
-import { createServer } from 'node:http'
-import type { AddressInfo } from 'node:net'
 import { describe, expect, it } from 'vitest'
 import { Context, Service, symbols } from '@deepseek-ai/cordis'
 import { z } from 'zod'
-import { apply as applyConnection, inject as connectionInject } from '@deepseek-ai/dsh-client-connection'
-import type { WebServer, WebRoute } from '@deepseek-ai/dsh-host-webserver'
+import {
+  apply as applyConnection,
+  inject as connectionInject,
+  type ConnectionRpcTarget,
+  type HostConnectionTransport,
+  type HostConnectionTransportHost,
+} from '@deepseek-ai/dsh-client-connection'
 import {
   bindTypertRemote,
   Remote,
@@ -134,37 +137,6 @@ class FakeConnectionService extends Service {
           }
         }),
     }
-  }
-}
-
-function fakeHttpServer(routes: WebRoute[]): Pick<WebServer, 'register' | 'tapIndex' | 'port'> {
-  return {
-    register(route) {
-      if (routes.some(candidate => candidate.kind === route.kind && candidate.path === route.path)) {
-        throw new Error(`duplicate route ${route.path}`)
-      }
-      routes.push(route)
-      return () => { routes.splice(routes.indexOf(route), 1) }
-    },
-    tapIndex: () => () => {},
-    port: 0,
-  }
-}
-
-async function serveRoute(route: WebRoute): Promise<{ readonly origin: string; close(): Promise<void> }> {
-  const server = createServer((request, response) => {
-    void route.handler(request, response)
-  })
-  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
-  const address = server.address() as AddressInfo
-  return {
-    origin: `http://127.0.0.1:${String(address.port)}`,
-    close: () => new Promise<void>((resolve, reject) => {
-      server.close((error) => {
-        if (error === undefined || error === null) resolve()
-        else reject(error)
-      })
-    }),
   }
 }
 
@@ -1101,9 +1073,15 @@ describe('TypertGatewayService', () => {
   })
 
   it('dispatches claimed invocations through /api and leaves unclaimed endpoints to its fallback', async () => {
-    const ctx = new Context().extend({ fixtureScope: 'http-caller' })
-    const routes: WebRoute[] = []
-    ctx.provide('webServer', fakeHttpServer(routes) as WebServer)
+    const ctx = new Context().extend({ fixtureScope: 'connection-caller' })
+    let transportHost: HostConnectionTransportHost | undefined
+    ctx.provide('connectionTransport', {
+      install(host: HostConnectionTransportHost) {
+        transportHost = host
+        return () => { transportHost = undefined }
+      },
+    } as unknown as HostConnectionTransport)
+    ctx.provide('apiProxy', {} as never)
     const connectionFiber = ctx.plugin({ inject: [...connectionInject], apply: applyConnection })
     await connectionFiber
     await ctx.plugin(TypertRegistry)
@@ -1114,42 +1092,36 @@ describe('TypertGatewayService', () => {
     const removeLookup = registerAgentLookup(ctx, { id: 'agent-1' })
     const removeStrict = registerStrict(ctx, [createDescriptor()])
     let strictActive = true
-    expect(routes).toHaveLength(1)
-    const server = await serveRoute(routes[0]!)
+    if (transportHost === undefined) throw new Error('fixture transport did not retain the Connection host')
+    const host: HostConnectionTransportHost = transportHost
+    const invoke = (
+      rpcId: string,
+      method: string,
+      payload: unknown,
+      authorize: (target: ConnectionRpcTarget) => boolean = () => true,
+    ) => host.invoke({
+      channel: '/api',
+      message: { type: 'client-request', rpcId: rpcId as never, method, payload },
+      caller: 'loopback',
+      signal: new AbortController().signal,
+      authorize,
+    })
 
     try {
-      const response = await fetch(`${server.origin}/api/goals/create`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          type: 'client-request',
-          rpcId: 'rpc-http',
-          method: 'goals/create',
-          payload: { args: { agentId: 'agent-1', request: { title: '  ship  ' } } },
-        }),
-      })
-      expect(response.status).toBe(200)
-      await expect(response.json()).resolves.toEqual({
+      await expect(invoke(
+        'rpc-http',
+        'goals/create',
+        { args: { agentId: 'agent-1', request: { title: '  ship  ' } } },
+      )).resolves.toEqual({
         type: 'server-response',
         rpcId: 'rpc-http',
         result: {
           ok: true,
-          value: { agentId: 'agent-1', title: 'ship', scope: 'http-caller' },
+          value: { agentId: 'agent-1', title: 'ship', scope: 'connection-caller' },
         },
       })
 
-      const invalid = await fetch(`${server.origin}/api/goals/create`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          type: 'client-request',
-          rpcId: 'rpc-invalid',
-          method: 'goals/create',
-          payload: { invalid: true },
-        }),
-      })
-      expect(invalid.status).toBe(200)
-      const invalidBody = await invalid.json() as unknown
+      const invalidBody = await invoke('rpc-invalid', 'goals/create', { invalid: true })
       expect(invalidBody).toMatchObject({
         type: 'server-response',
         rpcId: 'rpc-invalid',
@@ -1162,18 +1134,11 @@ describe('TypertGatewayService', () => {
 
       await removeStrict()
       strictActive = false
-      const withdrawn = await fetch(`${server.origin}/api/goals/create`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          type: 'client-request',
-          rpcId: 'rpc-withdrawn',
-          method: 'goals/create',
-          payload: { args: { agentId: 'agent-1', request: { title: 'ship' } } },
-        }),
-      })
-      expect(withdrawn.status).toBe(200)
-      const withdrawnBody = await withdrawn.json() as unknown
+      const withdrawnBody = await invoke(
+        'rpc-withdrawn',
+        'goals/create',
+        { args: { agentId: 'agent-1', request: { title: 'ship' } } },
+      )
       expect(withdrawnBody).toMatchObject({
         type: 'server-response',
         rpcId: 'rpc-withdrawn',
@@ -1184,17 +1149,20 @@ describe('TypertGatewayService', () => {
       })
       expect(JSON.stringify(withdrawnBody)).toContain('strict definition was withdrawn')
 
-      const unclaimed = await fetch(`${server.origin}/api/legacy/list`, { method: 'POST' })
-      expect(unclaimed.status).toBe(404)
+      let fallbackTarget: ConnectionRpcTarget | undefined
+      await expect(invoke('rpc-fallback', 'legacy/list', {}, (target) => {
+        fallbackTarget = target
+        return true
+      })).rejects.toThrow('RPC target "/api/legacy/list" is unavailable')
+      expect(fallbackTarget).toEqual({ kind: 'api-proxy', channel: '/api', endpoint: 'legacy/list' })
     } finally {
-      await server.close()
       if (strictActive) await removeStrict()
       await removeLookup()
       await goalFiber.dispose()
       await gatewayFiber.dispose()
       await connectionFiber.dispose()
     }
-    expect(routes).toHaveLength(0)
+    expect(transportHost).toBeUndefined()
   })
 })
 

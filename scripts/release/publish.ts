@@ -24,7 +24,7 @@ import {
   type ReleaseFamily,
   type ReleaseMember,
 } from './families.ts'
-import { attempt, isEntry } from './process.ts'
+import { attempt, attemptEchoed, isEntry } from './process.ts'
 import { packedIdentity, readPublishOrder } from './tarball.ts'
 
 /**
@@ -166,7 +166,7 @@ async function publishTarball(tarball: string, name: string, version: string): P
     // command-line flag could not serve both and would override the manifest
     // that does. Each packed manifest decides, and
     // check-workspace-constraints holds every manifest to its sequence's level.
-    const result = attempt('npm', ['publish', tarball, ...tagArgs])
+    const result = attemptEchoed('npm', ['publish', tarball, ...tagArgs])
     const output = `${result.stdout}${result.stderr}`
     if (result.status === 0) return
 
@@ -209,16 +209,20 @@ async function main(): Promise<void> {
   })
   verifyPublishCandidates(family, members, packed)
 
+  // Give every packed entry a stable progress index for a release that can take
+  // minutes per family, including an entry held behind an external promotion.
+  const total = String(packed.length)
   let published = 0
   let skipped = 0
   let held = 0
   const membersByName = new Map(members.map(member => [member.name, member]))
-  for (const { name, version, tarball } of packed) {
+  for (const [index, { name, version, tarball }] of packed.entries()) {
+    const progress = `[${String(index + 1)}/${total}]`
     const member = membersByName.get(name)
     if (member === undefined) throw new Error(`${name} disappeared from release family ${family.id}`)
     const hold = publicationHold(family, member, promotions)
     if (hold !== undefined) {
-      console.log(`release publish: ${name}@${version} held for promotion ${hold}`)
+      console.log(`release publish: ${progress} ${name}@${version} held for promotion ${hold}`)
       held += 1
       continue
     }
@@ -232,7 +236,7 @@ async function main(): Promise<void> {
           + '\nBump the version, or investigate why the build is not reproducible.',
         )
       }
-      console.log(`release publish: ${name}@${version} already published, skipping`)
+      console.log(`release publish: ${progress} ${name}@${version} already published, skipping`)
       skipped += 1
       continue
     }
@@ -240,13 +244,14 @@ async function main(): Promise<void> {
     // only skips does not wait at all.
     if (published > 0) await sleep(PUBLISH_SPACING_MS)
     await publishTarball(tarball, name, version)
-    console.log(`release publish: ${name}@${version} published`)
+    console.log(`release publish: ${progress} ${name}@${version} published`)
     published += 1
   }
 
   console.log(
-    `release publish: family ${family.id}, ${String(published)} published,`
-    + ` ${String(skipped)} already present, ${String(held)} held for promotion`,
+    `release publish: family ${family.id}, ${total} member(s),`
+    + ` ${String(published)} published, ${String(skipped)} already present,`
+    + ` ${String(held)} held for promotion`,
   )
 }
 

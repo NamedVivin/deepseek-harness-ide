@@ -4,7 +4,12 @@
  */
 import { Context } from '@deepseek-ai/cordis'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { apply as applyConnection, inject as connectionInject, type ConnectionHandle } from '@deepseek-ai/dsh-client-connection/client'
+import {
+  apply as applyConnection,
+  inject as connectionInject,
+  type ClientTransportHooks,
+  type ConnectionHandle,
+} from '@deepseek-ai/dsh-client-connection/client'
 import type { RpcMessage } from '@deepseek-ai/dsh-client-connection/client'
 import { RpcId } from '@deepseek-ai/dsh-client-connection/client'
 import { apply } from '../src/client/index.ts'
@@ -13,6 +18,7 @@ import { WebApiClient } from '../src/client/web-api-client.ts'
 
 type Win = { location?: { hostname: string; search: string; origin?: string } }
 type WebSocketGlobal = { WebSocket?: typeof WebSocket }
+type TransportGlobal = { __DSH_TRANSPORT__?: ClientTransportHooks }
 
 const originalWebSocket = globalThis.WebSocket
 const sockets: FakeWebSocket[] = []
@@ -50,6 +56,7 @@ class FakeWebSocket extends EventTarget {
 
 afterEach(() => {
   delete (globalThis as Win).location
+  delete (globalThis as TransportGlobal).__DSH_TRANSPORT__
   sockets.length = 0
   if (originalWebSocket === undefined) delete (globalThis as WebSocketGlobal).WebSocket
   else globalThis.WebSocket = originalWebSocket
@@ -65,6 +72,31 @@ async function mount(): Promise<ConnectionHandle> {
 }
 
 describe('connection client apply', () => {
+  it('uses the pre-boot carrier hooks for API and generic RPC transport', async () => {
+    ;(globalThis as Win).location = { hostname: 'localhost', search: '' }
+    const api = new FixtureApiClient()
+    const fetch = vi.fn(async (_input: URL, init: RequestInit) => {
+      if (typeof init.body !== 'string') throw new TypeError('expected JSON request body')
+      const request = JSON.parse(init.body) as { rpcId: string }
+      return Response.json({
+        type: 'server-response',
+        rpcId: request.rpcId,
+        result: { ok: true, value: { carrier: 'worker' } },
+      })
+    })
+    ;(globalThis as TransportGlobal).__DSH_TRANSPORT__ = {
+      createApiClient: () => api,
+      fetch,
+    }
+
+    const handle = await mount()
+
+    expect(handle.api).toBe(api)
+    await expect(handle.rpc.call('/api', 'fixture/ping', {}))
+      .resolves.toEqual({ ok: true, value: { carrier: 'worker' } })
+    expect(fetch).toHaveBeenCalledTimes(1)
+  })
+
   it('mounts ctx.connection with the real client when no ?fixture switch is present', async () => {
     ;(globalThis as Win).location = { hostname: 'localhost', search: '' }
     const handle = await mount()

@@ -14,6 +14,7 @@ import type {
 import {
   scrubbedParentEnv,
   type SubprocessHandle,
+  type SubprocessOutcome,
   type SubprocessSpawnSpec,
 } from '@deepseek-ai/dsh-subprocess'
 
@@ -83,8 +84,7 @@ export class ManagedClaudeCodeProcess implements SpawnedProcess {
   readonly stdin
   readonly stdout
   private readonly events = new EventEmitter()
-  private exitCodeValue: number | null = null
-  private signalCodeValue: NodeJS.Signals | null = null
+  private outcomeValue: SubprocessOutcome | undefined
   private killRequested = false
 
   /**
@@ -100,8 +100,7 @@ export class ManagedClaudeCodeProcess implements SpawnedProcess {
     this.events.on('error', () => {})
     void child.done.then(
       (outcome) => {
-        this.exitCodeValue = outcome.exitCode
-        this.signalCodeValue = outcome.signal
+        this.outcomeValue = outcome
         this.events.emit('exit', outcome.exitCode, outcome.signal)
       },
       (error: unknown) => {
@@ -117,12 +116,17 @@ export class ManagedClaudeCodeProcess implements SpawnedProcess {
 
   /** Direct-child exit code, or null while running or after signal exit. */
   get exitCode(): number | null {
-    return this.exitCodeValue
+    return this.outcomeValue?.exitCode ?? null
   }
 
   /** Direct-child terminating signal, if any. */
   get signalCode(): NodeJS.Signals | null {
-    return this.signalCodeValue
+    return this.outcomeValue?.signal ?? null
+  }
+
+  /** Exact managed-process outcome after exit, or undefined while running. */
+  get outcome(): SubprocessOutcome | undefined {
+    return this.outcomeValue
   }
 
   /**
@@ -133,8 +137,7 @@ export class ManagedClaudeCodeProcess implements SpawnedProcess {
   kill(_signal: NodeJS.Signals): boolean {
     if (
       this.killRequested
-      || this.exitCodeValue !== null
-      || this.signalCodeValue !== null
+      || this.outcomeValue !== undefined
     ) {
       return false
     }

@@ -3,4 +3,4 @@
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write packages/host/directory-picker-electron/README.md
 README.md: 5fddc9140dd47556e6ef93ed7e22c1a0a87aead3
-README.zh.md: f14b26afb0aaa58be05d23bf17fce6cc6833334c
+README.zh.md: 3cb8c31da4ab83b081b21d70eb562dc8883707d8

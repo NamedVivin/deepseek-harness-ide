@@ -3,4 +3,4 @@
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write packages/fs/fs-sandbox/README.md
 README.md: f08130bd1e80db0eb11bbb1b91053383ed156326
-README.zh.md: 75c06e8f2ccd24753772824bc37a3f3f1f71c1e9
+README.zh.md: 93b9644d310324db643293b6da488afbc46b6cf5

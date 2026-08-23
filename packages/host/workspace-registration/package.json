@@ -1,7 +1,7 @@
 {
   "name": "@deepseek-ai/dsh-host-workspace-registration",
   "description": "Host-owned native directory selection and authoritative Workspace registration Remote",
-  "version": "0.1.0-rc.5",
+  "version": "0.1.1-rc.2",
   "publishConfig": {
     "access": "public"
   },

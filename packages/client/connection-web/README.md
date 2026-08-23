@@ -8,7 +8,7 @@ Web provider for `@deepseek-ai/dsh-client-connection`. Its Host half binds the l
 
 Every HTTP route and WebSocket upgrade requires a `Host` authority that is loopback or listed in `trustedHosts`. Entries are canonical bare `host[:port]` authorities; a malformed entry fails at load. Browser `Origin` must match the Host authority when present, and explicit cross-site Fetch Metadata is rejected. This is a reachability policy, not authentication. Configuration, credential, native Host, model-discovery, and agent-preset authoring methods remain loopback-only even for a declared LAN authority.
 
-`maxRequestBodyBytes` defaults to 160 MiB. The provider fails at load when the configured limit cannot hold the attachment service's aggregate image limit after base64 expansion and envelope headroom. The bridge buffers one complete JSON request before dispatch.
+`maxRequestBodyBytes` defaults to 300 MiB. The provider fails at load when the configured limit cannot hold the attachment service's aggregate image limit after base64 expansion and envelope headroom. The bridge buffers one complete JSON request before dispatch.
 
 ## Downlinks
 

@@ -3,4 +3,4 @@
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/proposed/feature/2026-08-14-packaged-cross-platform-desktop-ide.md
 2026-08-14-packaged-cross-platform-desktop-ide.md: 319d30d7d12003a3effd6a91844d9567be7ac105
-2026-08-14-packaged-cross-platform-desktop-ide.zh.md: 93882289f0b085edafe391c05f9ce956a27f9a13
+2026-08-14-packaged-cross-platform-desktop-ide.zh.md: dd2aa24c971cccaeca49ce1f4722afd9bb193b07

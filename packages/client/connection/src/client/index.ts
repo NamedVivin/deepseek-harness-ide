@@ -39,6 +39,9 @@ export type { ConnectionConfig, ConnectionSinks, ConnectionState }
 export type { ClientConnectionRpc } from '../rpc.ts'
 export { ClientConnectionTransport } from './transport.ts'
 
+/** Fetch-compatible unary transport installed by a pre-boot page carrier. */
+export type RpcFetch = (input: URL, init: RequestInit) => Promise<Response>
+
 /** Observable Host description published by each completed connection handshake. */
 export interface HostDescriptionSource {
   /** Latest connected-generation description; absent before connect and while reconnecting. */
@@ -51,6 +54,25 @@ export interface HostDescriptionSource {
 export const inject = ['connectionTransport']
 
 /**
+ * Carrier override installed on the page global before plugin boot. The served
+ * web app leaves it unset and gets HTTP + WebSocket; a shell that owns a
+ * different physical transport (the worker preview's postMessage tunnel)
+ * provides both halves here instead of forking this plugin.
+ */
+export interface ClientTransportHooks {
+  /** Build the API carrier: unary calls plus the two downstream event streams. */
+  createApiClient(): IApiClient
+  /** Transport for generic unary RPC channels (the Typert gateway). */
+  fetch: RpcFetch
+  /**
+   * Bundle transport for the module system, present when the carrier also owns
+   * bundle bytes (the worker tunnel). Absent in the served web app, whose
+   * bundles load over HTTP.
+   */
+  loadBundle?(url: string): Promise<void>
+}
+
+/**
  * The ctx.connection service API: the API client plus a one-shot
  * controller starter (the runtime plugin supplies sinks when its object layer
  * is ready — connection stays consumer-agnostic).
@@ -60,7 +82,7 @@ export interface ConnectionHandle {
   readonly api: IApiClient
   /** Whether the current page authority is loopback; non-browser contexts default to true. */
   readonly isLoopback: boolean
-  /** Generation-scoped Host facts, including native path-open capability. */
+  /** Generation-scoped Host facts, including the account home and native path-open capability. */
   readonly hostDescription: HostDescriptionSource
   /** Generic logical RPC channels over the same Connection transport. */
   readonly rpc: ClientConnectionRpc

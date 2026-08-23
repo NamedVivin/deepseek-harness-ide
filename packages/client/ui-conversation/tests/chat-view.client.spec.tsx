@@ -4,7 +4,7 @@
 // ObservableSnapshot fake, no wire or Tool presentation plugin.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, cleanup, fireEvent, render, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { useEffect } from 'react'
 import type {
   AssistantMessageNode, CommandNode, CompactionSummaryNode, ConversationNode, ConversationSnapshot,
@@ -12,7 +12,7 @@ import type {
   TurnMaxTokensNode, UserMessageNode, WorkspaceListState,
 } from '@deepseek-ai/dsh-client-runtime/client'
 import type { FileLocation } from '@deepseek-ai/dsh-tools'
-import { bindSnapshotSelector } from '@deepseek-ai/dsh-client-web-react'
+import { bindSnapshotSelector } from '@deepseek-ai/dsh-client-test-runtime'
 import {
   createSnapshotStore, EMPTY_CONVERSATION_VIEWS, PendingWait,
 } from '@deepseek-ai/dsh-client-runtime/client'
@@ -970,8 +970,111 @@ describe('ChatView', () => {
     })
     const owner = calls[0]?.owner as RoutedChatNodeOwner
     expect((owner.node.data as { readonly root: ToolCallBlock }).root).toBe(block)
-    expect(owner.openFile).toBe(h.openFile)
+    expect(owner.openFile).not.toBe(h.openFile)
+    void owner.openFile({ path: 'src/a.ts', line: 12 })
+    expect(h.openFile).toHaveBeenCalledWith({ path: 'src/a.ts', line: 12 })
     expect(owner.inspectCall).toBe(h.inspectCall)
+  })
+
+  it('shows a Host open refusal with the reason and retries the same path', async () => {
+    const openFile = vi.fn<(location: FileLocation) => Promise<void>>()
+      .mockRejectedValueOnce(new Error('xdg-open is not available'))
+      .mockResolvedValueOnce(undefined)
+    const h = makeHarness({ nodes: [toolResult(3, 'a')] })
+    h.props.openFile = openFile
+    render(<h.ChatView {...h.props} />)
+    await act(async () => { await h.toolOwners[0]!.openFile({ path: 'src/a.ts', line: 12 }) })
+    await waitFor(() => {
+      expect(screen.getByRole('dialog', { name: '无法打开文件' })).toBeTruthy()
+    })
+    expect(screen.getByRole('dialog', { name: '无法打开文件' }).textContent).toContain('xdg-open is not available')
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: '重试' })) })
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).toBeNull()
+    })
+    expect(openFile).toHaveBeenCalledTimes(2)
+    expect(openFile).toHaveBeenNthCalledWith(1, { path: 'src/a.ts', line: 12 })
+    expect(openFile).toHaveBeenNthCalledWith(2, { path: 'src/a.ts', line: 12 })
+  })
+
+  it('keeps a non-Error Host refusal visible and dismisses it on cancel', async () => {
+    const openFile = vi.fn<(location: FileLocation) => Promise<void>>()
+      .mockRejectedValueOnce('permission denied')
+    const h = makeHarness({ nodes: [toolResult(3, 'a')] })
+    h.props.openFile = openFile
+    render(<h.ChatView {...h.props} />)
+    await act(async () => { await h.toolOwners[0]!.openFile({ path: 'notes.md' }) })
+    await waitFor(() => {
+      expect(screen.getByRole('dialog', { name: '无法打开文件' }).textContent).toContain('permission denied')
+    })
+    fireEvent.click(screen.getByRole('button', { name: '取消' }))
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(openFile).toHaveBeenCalledTimes(1)
+  })
+
+  it('substitutes the unknown-open copy when the Host refusal has no text', async () => {
+    const openFile = vi.fn<(location: FileLocation) => Promise<void>>()
+      .mockRejectedValueOnce(new Error(''))
+    const h = makeHarness({ nodes: [toolResult(3, 'a')] })
+    h.props.openFile = openFile
+    render(<h.ChatView {...h.props} />)
+    await act(async () => { await h.toolOwners[0]!.openFile({ path: 'empty.ts' }) })
+    await waitFor(() => {
+      expect(screen.getByRole('dialog', { name: '无法打开文件' }).textContent).toContain('无法打开此文件')
+    })
+  })
+
+  it('names a workspace-folder Host refusal as a folder', async () => {
+    const openFile = vi.fn<(location: FileLocation) => Promise<void>>()
+      .mockRejectedValueOnce(new Error(''))
+    const h = makeHarness({ nodes: [toolResult(3, 'a')] })
+    h.props.openFile = openFile
+    render(<h.ChatView {...h.props} />)
+    await act(async () => { await h.toolOwners[0]!.openFile({ path: '.' }) })
+    await waitFor(() => {
+      expect(screen.getByRole('dialog', { name: '无法打开文件夹' }).textContent).toContain('无法打开此文件夹')
+    })
+  })
+
+  it('ignores a Host refusal that settles after the dialog is dismissed', async () => {
+    let rejectRetry!: (error: unknown) => void
+    const openFile = vi.fn<(location: FileLocation) => Promise<void>>()
+      .mockRejectedValueOnce(new Error('first refusal'))
+      .mockImplementationOnce(() => new Promise<void>((_resolve, reject) => {
+        rejectRetry = reject
+      }))
+    const h = makeHarness({ nodes: [toolResult(3, 'a')] })
+    h.props.openFile = openFile
+    render(<h.ChatView {...h.props} />)
+    await act(async () => { await h.toolOwners[0]!.openFile({ path: 'src/a.ts' }) })
+    await waitFor(() => {
+      expect(screen.getByRole('dialog', { name: '无法打开文件' }).textContent).toContain('first refusal')
+    })
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: '重试' })) })
+    fireEvent.click(screen.getByRole('button', { name: '取消' }))
+    expect(screen.queryByRole('dialog')).toBeNull()
+    await act(async () => { rejectRetry(new Error('late refusal')) })
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('ignores a Host open that succeeds after the dialog is dismissed', async () => {
+    let resolveRetry!: () => void
+    const openFile = vi.fn<(location: FileLocation) => Promise<void>>()
+      .mockRejectedValueOnce(new Error('first refusal'))
+      .mockImplementationOnce(() => new Promise<void>((resolve) => {
+        resolveRetry = () => { resolve() }
+      }))
+    const h = makeHarness({ nodes: [toolResult(3, 'a')] })
+    h.props.openFile = openFile
+    render(<h.ChatView {...h.props} />)
+    await act(async () => { await h.toolOwners[0]!.openFile({ path: 'src/a.ts' }) })
+    await waitFor(() => {
+      expect(screen.getByRole('dialog', { name: '无法打开文件' }).textContent).toContain('first refusal')
+    })
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: '重试' })) })
+    fireEvent.click(screen.getByRole('button', { name: '取消' }))
+    await act(async () => { resolveRetry() })
+    expect(screen.queryByRole('dialog')).toBeNull()
   })
 
   it('prepend preserves a semantic row; a trailing user node force-scrolls', () => {

@@ -1,7 +1,7 @@
 {
   "name": "@deepseek-ai/dsh-subprocess-pty",
   "description": "PTY subprocess seam (ctx.subprocessPty) for provider-owned terminal sessions",
-  "version": "0.1.0-rc.5",
+  "version": "0.1.1-rc.2",
   "publishConfig": {
     "access": "public"
   },

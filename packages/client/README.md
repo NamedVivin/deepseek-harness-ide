@@ -10,21 +10,21 @@ The browser side of the dsh web GUI: shell boot, browser-host communication, sha
 | [`modules/`](modules/README.md) | Discovers and loads carrier-neutral renderer modules. |
 | [`modules-web/`](modules-web/README.md) | Delivers Client bundles through Web routes and index injection. |
 | [`modules-desktop/`](modules-desktop/README.md) | Maps signed Client bundles to immutable `dsh-app://` URLs. |
-| [`web-react/`](web-react/README.md) | Connects the shell runtime to React rendering. |
+| [`ui-renderer/`](ui-renderer/README.md) | Binds slot data to React and mounts the assembled application after client boot settles. |
 | [`connection/`](connection/README.md) | Owns the carrier-neutral RPC registry, Client handle, and event-loop consumer. |
 | [`connection-web/`](connection-web/README.md) | Carries Connection over trusted HTTP routes and WebSocket downlinks. |
 | [`connection-desktop/`](connection-desktop/README.md) | Carries Connection over typed, bounded desktop child IPC. |
 | [`runtime/`](runtime/README.md) | Provides shared client services for sessions, workspaces, and UI composition. |
 | [`hmr/`](hmr/README.md) | Refreshes client plugins during development. |
 | [`locale/`](locale/README.md) | Provides localization preferences and message dictionaries. |
-| [`schema-form/`](schema-form/README.md) | Provides schema-backed draft handling for settings editors. |
 | [`test-runtime/`](../test-support/client-runtime/README.md) | Provides shared repository test support for client feature packages. |
 | [`ui-slots/`](ui-slots/README.md) | Defines how UI features register and compose extension slots. |
 | [`ui-theme/`](ui-theme/README.md) | Applies the selected color theme. |
 | [`ui-primitives/`](ui-primitives/README.md) | Provides shared React controls, icons, and content renderers. |
-| [`ui-attachment/`](ui-attachment/README.md) | Provides attachment display atoms: draft-image rail, message gallery, and lightbox. |
+| [`ui-attachment/`](ui-attachment/README.md) | Registers composer and message-image attachment presentation. |
 | [`ui-layout/`](ui-layout/README.md) | Arranges the main application regions. |
 | [`ui-sidebar/`](ui-sidebar/README.md) | Presents workspace and session navigation. |
+| [`ui-brand-official/`](ui-brand-official/README.md) | Fills the generic browser-brand slots with the official name and marks. |
 | [`ui-workspace/`](ui-workspace/README.md) | Provides workspace selection and creation surfaces. |
 | [`ui-directory-picker-desktop/`](ui-directory-picker-desktop/README.md) | Registers native desktop picks inside the Host. |
 | [`ui-ide/`](ui-ide/README.md) | Provides workspace file browsing, editing, Markdown preview, and CAS recovery. |
@@ -36,6 +36,7 @@ The browser side of the dsh web GUI: shell boot, browser-host communication, sha
 | [`ui-commands/`](ui-commands/README.md) | Provides session-aware command discovery and dispatch. |
 | [`ui-input-trigger/`](ui-input-trigger/README.md) | Coordinates inline command and reference suggestions. |
 | [`ui-skill/`](ui-skill/README.md) | Adds skill references to inline suggestions. |
+| [`ui-reference/`](ui-reference/README.md) | Unified Web `@file` / `@session` reference source. |
 | [`ui-subagent/`](ui-subagent/README.md) | Provides subagent navigation, child transcript states, and inline references. |
 | [`ui-jobs/`](ui-jobs/README.md) | Lists this session's background jobs in the conversation header. |
 | [`ui-model-selection/`](ui-model-selection/README.md) | Provides model selection in conversation surfaces. |

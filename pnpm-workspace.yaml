@@ -69,6 +69,20 @@ allowBuilds:
   # The Python runtime deploy includes the reviewed workspace postinstall that
   # restores the executable bit on node-pty's macOS spawn helper.
   '@deepseek-ai/dsh-subprocess-pty-local@file:packages/subprocess/subprocess-pty-local': true
+  # Optional watcher, codec, and native rendering accelerators keep their
+  # JavaScript fallbacks in repository workflows.
+  '@parcel/watcher': false
+  bufferutil: false
+  canvas: false
+  msgpackr-extract: false
+  utf-8-validate: false
+  # Transitive browser-driver downloads are not part of the Playwright-owned
+  # GUI test path.
+  edgedriver: false
+  geckodriver: false
+  # These lifecycle hooks only print notices or prepare optional mock assets.
+  core-js: false
+  msw: false
 minimumReleaseAgeExclude:
   # Fresh pi-ai releases carry the model catalog updates that are the whole
   # point of bumping it; waiting out the release age would defeat that.
@@ -84,4 +98,4 @@ minimumReleaseAgeExclude:
   - node-addon-require-builtin@0.1.4
 
 patchedDependencies:
-  node-pty@1.1.0: patches/node-pty@1.1.0.patch
+  node-pty@1.2.0-beta.15: patches/node-pty@1.2.0-beta.15.patch

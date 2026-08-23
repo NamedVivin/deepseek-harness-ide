@@ -6,7 +6,7 @@
 
 ## 组装与准入
 
-桌面应用使用 `DESKTOP_PRESET_ROOT`、`default: desktop-default` 和 `includeUserRoot: false` 配置 [`dsh-agent-presets`](../agent-presets/README.md)，随后挂载本 provider。若 live service 暴露了其他根目录、preset、默认值、创作路径、插件行，或 `fs`、`subprocess`、`subprocessPty`、`terminals` isolate，启动会以 `DesktopPresetStartupError` 失败。同时存在第二个 provider 实例也会导致启动失败。
+桌面应用使用 `DESKTOP_PRESET_ROOT`、`default: desktop-default` 和 `includeUserRoot: false` 配置 [`dsh-agent-presets`](../agent-presets/README.zh.md)，随后挂载本 provider。若 live service 暴露了其他根目录、preset、默认值、创作路径、插件行，或 `fs`、`subprocess`、`subprocessPty`、`terminals` isolate，启动会以 `DesktopPresetStartupError` 失败。同时存在第二个 provider 实例也会导致启动失败。
 
 `desktop-default` 挂载普通 Bash/PowerShell、文件系统、搜索、字符串替换、任务、skill、提问与 todo consumer。它继承 Host 的同一份 `ctx.fs` 和 `ctx.subprocess` service，且不包含文件系统 provider、subprocess provider、PTY service、持久终端 consumer 或持有 provider 的 isolate。这样，编辑器保存与 Harness 文件工具共用同一 Host 文件系统权限，而普通 shell 工具使用应用选择的桌面 guardian provider。
 

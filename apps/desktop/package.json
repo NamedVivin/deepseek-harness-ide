@@ -1,7 +1,7 @@
 {
   "name": "@deepseek-ai/dsh-desktop",
   "description": "Installable zero-port Electron IDE with a pure Node.js Host sidecar",
-  "version": "0.1.0-rc.5",
+  "version": "0.1.1-rc.2",
   "author": "DeepSeek",
   "productName": "DeepSeek Harness IDE",
   "publishConfig": {

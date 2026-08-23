@@ -51,7 +51,7 @@
   padding: 0 28px 0 10px;
   border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 7px;
-  background: var(--dsw-alias-bg-layer-2);
+  background: var(--dsw-specific-selector);
   color: var(--dsw-alias-label-primary);
 }
 

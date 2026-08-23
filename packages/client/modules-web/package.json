@@ -1,7 +1,7 @@
 {
   "name": "@deepseek-ai/dsh-client-modules-web",
   "description": "Web Client-module delivery through /plugins assets and index manifest injection",
-  "version": "0.1.0-rc.5",
+  "version": "0.1.1-rc.2",
   "publishConfig": { "access": "public" },
   "repository": {
     "type": "git",

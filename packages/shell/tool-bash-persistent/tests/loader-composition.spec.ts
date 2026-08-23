@@ -15,7 +15,7 @@ import * as TerminalLocal from '@deepseek-ai/dsh-terminal-bash'
 import SandboxProvider from '@deepseek-ai/dsh-sandbox'
 import type { ConfinedArgv, SandboxPolicy } from '@deepseek-ai/dsh-sandbox'
 import SandboxPolicyService from '@deepseek-ai/dsh-sandbox-policy'
-import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
+import LocalSubprocessPtyRuntime from '@deepseek-ai/dsh-subprocess-pty-local'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import * as ToolBashPersistent from '@deepseek-ai/dsh-tool-bash-persistent'
@@ -79,12 +79,15 @@ suite('persistent Bash through a real cordis.yml Loader composition', () => {
       '  config:',
       '    mode: danger-full-access',
       `    workspaceRoot: ${JSON.stringify(root)}`,
-      "- name: '@deepseek-ai/dsh-subprocess-local'",
+      "- name: '@deepseek-ai/dsh-subprocess-pty-local'",
       "- name: '@deepseek-ai/dsh-terminal-bash'",
       '  config:',
       '    pollIntervalMs: 10',
       '    exactProbeAfterMs: 20',
-      '    idleSilenceMs: 100',
+      // The silence tier is pushed beyond the send bound, so no send below can
+      // settle as inferred_idle: every case proves the controlled-prompt fast
+      // path that the production defaults (3.5s silence) would otherwise mask.
+      '    idleSilenceMs: 30000',
       '    handoffGraceMs: 100',
       '    scrollbackLines: 20000',
       '    timeoutMs: 2000',
@@ -106,7 +109,7 @@ suite('persistent Bash through a real cordis.yml Loader composition', () => {
       ['@deepseek-ai/dsh-terminal', TerminalSessionService],
       ['@deepseek-ai/dsh-test-sandbox', PassthroughSandbox],
       ['@deepseek-ai/dsh-sandbox-policy', SandboxPolicyService],
-      ['@deepseek-ai/dsh-subprocess-local', LocalSubprocessRuntime],
+      ['@deepseek-ai/dsh-subprocess-pty-local', LocalSubprocessPtyRuntime],
       ['@deepseek-ai/dsh-terminal-bash', TerminalLocal],
       ['@deepseek-ai/dsh-tool-bash-persistent', ToolBashPersistent],
     ])
@@ -153,6 +156,12 @@ suite('persistent Bash through a real cordis.yml Loader composition', () => {
     expect(large.startsWith('1\n2\n3\n')).toBe(true)
     expect(large).toContain('<response clipped>')
     expect(large).not.toContain('beginning of this command output was dropped')
+
+    // `exec` replaces the wrapper before its end marker prints; the seam's
+    // stdin_read readiness is what returns the replacement shell's prompt
+    // instead of spinning until the tool deadline.
+    const execed = text(await execute('exec-replacement', 'exec bash --noprofile --norc -i'))
+    expect(execed).toBe('dsh> ')
 
     const exited = text(await execute('exit', 'exit'))
     expect(exited).toContain('next bash call starts from the workspace')

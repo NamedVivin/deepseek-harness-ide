@@ -74,7 +74,7 @@ describe('desktop npm promotion evidence', () => {
   })
 
   it('wires verified evidence before the npm promotion environment', () => {
-    const workflow = readFileSync('.github/workflows/release.yml', 'utf8')
+    const workflow = readFileSync('.github/workflows/release-publish.yml', 'utf8')
     const verification = workflow.indexOf('Verify signed desktop promotion evidence')
     const promotion = workflow.indexOf('DSH_RELEASE_PROMOTIONS:')
     expect(workflow).toContain('desktop_verification_run_id:')

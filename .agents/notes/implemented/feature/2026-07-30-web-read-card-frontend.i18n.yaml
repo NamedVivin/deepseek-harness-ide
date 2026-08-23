@@ -3,4 +3,4 @@
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-07-30-web-read-card-frontend.md
 2026-07-30-web-read-card-frontend.md: bd847e71a55d83d60443a1aeeb5f95c27b46b965
-2026-07-30-web-read-card-frontend.zh.md: 73dd1d7ffc143fb2d6e7f3950e12cf59b4d2d391
+2026-07-30-web-read-card-frontend.zh.md: fe88ce941588e2eb3bb1a4303475fd2dc0c27a97

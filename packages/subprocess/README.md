@@ -2,7 +2,7 @@
 
 English | [中文](README.zh.md)
 
-The shared process substrate for one execution world. Ordinary processes and PTY sessions are independent capabilities: deployments that need batch commands or protocol children do not acquire the native `node-pty` dependency. Command defaulting, shell semantics, deadlines, protocol framing, readiness, and presentation stay with consumers — the [bash executors](../shell/README.md), [LSP host](../lsp/README.md), [PTY shell backend](../terminal/README.md), and [ACP subagent backend](../subagent/README.md).
+The shared process substrate for one execution world. Ordinary processes and PTY sessions are independent capabilities: deployments that need batch commands or protocol children do not acquire the native `node-pty` dependency. Command defaulting, shell semantics, deadlines, protocol framing, readiness, and presentation stay with consumers — the [bash executors](../shell/README.md), [LSP host](../lsp/README.md), [PTY shell backend](../terminal/README.md), and [ACP subagent backend](../subagent/README.md). See the [subprocess seam Agent Note](../../.agents/notes/implemented/architecture/2026-07-26-subprocess-seam.md).
 
 | Package | ctx key | Role |
 |---|---|---|

@@ -8,7 +8,7 @@
 
 每条 HTTP route 与 WebSocket upgrade 都要求 `Host` authority 是 loopback 或列在 `trustedHosts` 中。条目必须是规范的纯 `host[:port]` authority；格式错误会在加载时失败。浏览器带有 `Origin` 时，它必须与 Host authority 匹配；显式 cross-site Fetch Metadata 会被拒绝。这是可达性策略，不是认证。即使 LAN authority 已声明，配置、凭据、原生 Host、模型发现与 agent preset 创作方法仍只限 loopback。
 
-`maxRequestBodyBytes` 默认 160 MiB。如果配置限制无法容纳 attachment service 的聚合图片上限经 base64 膨胀与信封余量后的大小，provider 会在加载时失败。bridge 会在分发前完整缓冲一个 JSON request。
+`maxRequestBodyBytes` 默认 300 MiB。如果配置限制无法容纳 attachment service 的聚合图片上限经 base64 膨胀与信封余量后的大小，provider 会在加载时失败。bridge 会在分发前完整缓冲一个 JSON request。
 
 ## 下行流
 

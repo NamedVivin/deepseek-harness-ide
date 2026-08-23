@@ -2,13 +2,13 @@
 
 [English](client-modules.md) | 中文
 
-[dsh-client-modules](../../packages/client/modules) 中载体中立的 Client 插件表，以 `ctx.clientModules`（`ClientModuleRegistry`）形式提供。它扫描声明了 `dsh.client` 的 Host Loader entry，为浏览器 bundle 计算哈希，并组合一份带 revision 的依赖图。必须且只能有一个 `ctx.clientModuleDelivery` provider 提供物理 URL 并在对应载体上安装该图：[dsh-client-modules-web](../../packages/client/modules-web) 负责 HTTP 路由与 index 注入，[dsh-client-modules-desktop](../../packages/client/modules-desktop) 则负责根据打包 manifest 解析不可变 `dsh-app://` URL。这项 GUI 能力是可选的，不属于 agent loop 主干。浏览器半（`ctx.modules`）仍是唯一代码 loader，记录在[包 README](../../packages/client/modules/README.md)中。
+[dsh-client-modules](../../packages/client/modules) 中载体中立的 Client 插件表，以 `ctx.clientModules`（`ClientModuleRegistry`）形式提供。它扫描声明了 `dsh.client` 的 Host Loader entry，为浏览器 bundle 计算哈希，并组合一份带 revision 的依赖图。必须且只能有一个 `ctx.clientModuleDelivery` 提供方负责物理 URL 并在对应载体上安装该图：[dsh-client-modules-web](../../packages/client/modules-web) 消费 [dsh-host-webserver](../../packages/host/webserver) 并持有 HTTP 路由与 index 注入，[dsh-client-modules-desktop](../../packages/client/modules-desktop) 则负责根据打包 manifest 解析不可变 `dsh-app://` URL。这项 GUI 能力是可选的，不属于 agent loop 主干。renderer 半（`ctx.modules`）仍是唯一代码 loader，记录在[包 README](../../packages/client/modules/README.zh.md)中。
 
 源码：[`packages/client/modules/src/index.ts`](../../packages/client/modules/src/index.ts)
 
 ## wire
 
-图是 Host 半与 renderer 半之间协议层的唯一真源。Host 从扫描到的包组合出 `WebBootEntry` 行，再由选定的 delivery provider 分配各行 URL。Web 把图作为 `<head>` 中的第一个脚本注入（`window.__DSH_BOOT__`，并转义 `<`）；desktop 则在启动前通过闭合的 `desktop.bootManifest` IPC method 取得同一份图。renderer 缺少有效 manifest 时会在加载任何 Client bundle 前失败。
+图是 Host 半与 renderer 半之间协议层的唯一真源。Host 从扫描到的包组合出 `WebBootEntry` 行，再由选定的交付提供方分配各行 URL。Web 把图发布为一条 `global` 注入行、渲染在后续 script 行之前（`globalThis["__DSH_BOOT__"]`，其中 `<` 已转义，插件可控的字符串因此无法逃出 script 元素）；desktop 则在启动前通过闭合的 `desktop.bootManifest` IPC method 取得同一份图。shell 会在加载任何 Client bundle 前解析 manifest，缺失或畸形时大声抛错。
 
 ```ts type-equiv
 /**
@@ -16,7 +16,9 @@
  * single source: the host node half (package root) produces this same shape.
  * `immediately` marks stage-one prefetch; `inject` is informational graph
  * metadata (the authoritative edges live in each package's `dsh.client`
- * declaration and reach fibers through entry creation).
+ * declaration and reach fibers through entry creation). `external` carries
+ * module-graph edges: unlike `inject`, they constrain code arrival because
+ * `require` is synchronous (see {@link WebBootGraph.entries}).
  */
 interface WebBootEntry {
   /** Entry name == package name. */
@@ -29,6 +31,8 @@ interface WebBootEntry {
   inject?: string[]
   /** Stage-one prefetch mark: load the script for factory registration during module-face boot. */
   immediately?: boolean
+  /** Non-baseline module specifiers this row requests; omitted when it requests none. */
+  external?: string[]
 }
 ```
 
@@ -37,7 +41,11 @@ interface WebBootEntry {
 interface WebBootGraph {
   /** Consistency anchor over the whole graph (content + bundle hashes). */
   rev: string
-  /** Composed entries; order carries no semantics (activation order is fiber inject waiting). */
+  /**
+   * Composed entries in module-graph order — a dynamic package row precedes
+   * rows whose `external` requests that package. Cordis activation order is
+   * unrelated and remains owned by fiber service waiting.
+   */
   entries: WebBootEntry[]
 }
 ```
@@ -52,15 +60,15 @@ interface WebBootGraph {
 
 包元数据——包括「非 client 包」这一否定结论——按名缓存且永不过期：插件集合的变更在重启后生效。fiber 重启原样复用其行与 rev；bundle 内容变更只经 `rebuilt()` 到达图。
 
-## 交付 provider
+## 交付提供方
 
-Web provider 以 `no-cache` 提供 `GET`/`HEAD /plugins/<id>/client.js`，拒绝其他 method，并在每次 index 渲染时注入当前图。desktop provider 生成 `dsh-app://plugins/<id>/client.js?rev=<rev>`，且只解析与当前图完全一致的 URL；Electron 随后再通过单独计算哈希的打包资源 manifest 映射该 URL。路径穿越、未知 id、过期 revision、不可读 bundle 与重复 delivery provider 都会大声失败。
+Web 提供方以 `no-cache` 从磁盘提供 `GET`/`HEAD /plugins/<id>/client.js`（锚定一致性的是 rev 查询参数，而非 HTTP 缓存），其他 method 返回 405，并在每次 index 渲染时注入当前图。未知 id 与不可读的已注册 bundle 会大声返回 404。desktop 提供方生成 `dsh-app://plugins/<id>/client.js?rev=<rev>`，且只解析与当前图完全一致的 URL；Electron 随后再通过单独计算哈希的打包资源 manifest 映射该 URL。路径穿越、过期 revision、不可读 bundle 与重复交付提供方都会大声失败。
 
 ## 服务
 
 `ClientModuleRegistry`（`ctx.clientModules`，定义于 [`packages/client/modules/src/index.ts`](../../packages/client/modules/src/index.ts)）暴露读取面与重建面；签名见生成的[服务目录](#ctxclientmodules--clientmoduleregistry)。`graph()` 返回当前组合出的图（两次变更之间是同一个稳定对象），`clientPath(id)` 返回该 bundle 的绝对路径。`rebuilt(id)` 是 bundle 内容到达图的唯一入口：它对文件重新哈希，只有 rev 真正变化才会重新组合图并发出通知。`onRebuilt` 按发生变化的 bundle 逐个触发并携带新 rev；`onGraphChanged` 在任何一次重新组合了图的 flush 之后触发（行的增删，或 rebuilt 带来的 rev 变化），并采用拉取模型——监听器自行重读 `graph()`。两条通知路径都会兜住监听器异常，因此一个抛错的订阅者既不能让后续订阅者被跳过，也不能杀死触发这次 flush 的一方。
 
-开发环境下，[dsh-client-hmr](../../packages/client/hmr/README.md) 是注册表的监视驱动：它的 Node 半从同步取得的基线出发，对图中每一行的 bundle 做 stat 轮询，变化时调用 `rebuilt(id)`，经 `onGraphChanged` 重新同步监视集合，并通过 SSE（Server-Sent Events）把 rev 变化广播给浏览器半。生产环境的图完全不含 HMR（热模块替换）行；模块宿主自身从不监视文件。
+开发环境下，[dsh-client-hmr](../../packages/client/hmr/README.zh.md) 是注册表的监视驱动：它的 Node 半从同步取得的基线出发，对图中每一行的 bundle 做 stat 轮询，变化时调用 `rebuilt(id)`，经 `onGraphChanged` 重新同步监视集合，并通过 SSE（Server-Sent Events）把 rev 变化广播给浏览器半。生产环境的图完全不含 HMR（热模块替换）行；模块宿主自身从不监视文件。
 
 <!-- BEGIN GENERATED cordis-surface (gen-cordis-catalog.ts) — do not edit between markers -->
 
@@ -68,7 +76,7 @@ Web provider 以 `no-cache` 提供 `GET`/`HEAD /plugins/<id>/client.js`，拒绝
 
 ## Cordis API
 
-Generated from source by `scripts/gen-cordis-catalog.ts` (verified fresh by `pnpm run verify-cordis-catalog` in doc-sync; regenerate with `pnpm run gen-cordis-catalog`) — this section is byte-identical in both language sides of the page. Signature blocks use a `ts cordis-catalog` fence and keep the original source JSDoc; dispatch modes are defined in the [primer](../cordis-primer.md#dispatch-modes), and the framework-inherited `ctx` API lives in [cordis-api/inherited.md](../cordis-api/inherited.md).
+Generated from source by `scripts/gen-cordis-catalog.ts` (verified fresh by `pnpm run verify-cordis-catalog` in doc-sync; regenerate with `pnpm run gen-cordis-catalog`) — the language sides differ only in locale-specific paired document paths. Signature blocks use a `ts cordis-catalog` fence and keep the original source JSDoc; dispatch modes are defined in the [primer](../cordis-primer.zh.md#dispatch-modes), and the framework-inherited `ctx` API lives in [cordis-api/inherited.md](../cordis-api/inherited.md).
 
 <a id="ctxclientmoduledelivery--clientmoduledelivery-abstract-seam"></a>
 
@@ -100,7 +108,7 @@ abstract install(host: ClientModuleDeliveryHost): () => void
 abstract resolveBundleUrl(url: string): string | undefined
 ```
 
-Source: [`packages/client/modules/src/delivery.ts:24`](../../packages/client/modules/src/delivery.ts)
+Source: [`packages/client/modules/src/delivery.ts`](../../packages/client/modules/src/delivery.ts)
 
 <a id="ctxclientmodules--clientmoduleregistry"></a>
 
@@ -146,7 +154,7 @@ onRebuilt(listener: (id: string, rev: string) => void): () => void
 onGraphChanged(listener: () => void): () => void
 ```
 
-Source: [`packages/client/modules/src/index.ts:170`](../../packages/client/modules/src/index.ts)
+Source: [`packages/client/modules/src/index.ts`](../../packages/client/modules/src/index.ts)
 
 <a id="ctxconnection--hostconnectionhandle"></a>
 
@@ -154,7 +162,7 @@ Source: [`packages/client/modules/src/index.ts:170`](../../packages/client/modul
 
 Host `ctx.connection` shape consumed by transport-independent adapters.
 
-Source: [`packages/client/connection/src/rpc.ts:56`](../../packages/client/connection/src/rpc.ts)
+Source: [`packages/client/connection/src/rpc.ts`](../../packages/client/connection/src/rpc.ts)
 
 <a id="ctxconnectiontransport--hostconnectiontransport-abstract-seam"></a>
 
@@ -171,7 +179,7 @@ Service Definition implemented by the Web and desktop Connection providers.
 abstract install(host: HostConnectionTransportHost): () => void | Promise<void>
 ```
 
-Source: [`packages/client/connection/src/transport.ts:67`](../../packages/client/connection/src/transport.ts)
+Source: [`packages/client/connection/src/transport.ts`](../../packages/client/connection/src/transport.ts)
 
 <a id="ctxdesktophostbridge--desktophostbridge"></a>
 
@@ -190,5 +198,5 @@ Sidecar-to-Electron main capability service with a closed method map.
 request<K extends keyof HostInitiatedMethodMap>( method: K, payload: HostInitiatedRequest<K>, signal?: AbortSignal, ): Promise<HostInitiatedResponse<K>>
 ```
 
-Source: [`packages/client/connection-desktop/src/index.ts:161`](../../packages/client/connection-desktop/src/index.ts)
+Source: [`packages/client/connection-desktop/src/index.ts`](../../packages/client/connection-desktop/src/index.ts)
 <!-- END GENERATED cordis-surface -->

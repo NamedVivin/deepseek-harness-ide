@@ -2,7 +2,7 @@
 
 [English](README.md) | 中文
 
-可选 [`ctx.subprocessPty`](../../subprocess/subprocess-pty/README.md) 能力的 E2B Service Provider。先加载 [`dsh-e2b`](../e2b/README.md)；远端 composition 需要 persistent terminal session 时再加载本包。普通远端进程仍由 [`dsh-subprocess-e2b`](../subprocess-e2b/README.md) 提供。
+可选 [`ctx.subprocessPty`](../../subprocess/subprocess-pty/README.zh.md) 能力的 E2B Service Provider。先加载 [`dsh-e2b`](../e2b/README.zh.md)；远端 composition 需要 persistent terminal session 时再加载本包。普通远端进程仍由 [`dsh-subprocess-e2b`](../subprocess-e2b/README.zh.md) 提供。
 
 ## 配置
 
@@ -16,7 +16,7 @@
 - 发布会等待正数 PTY 进程 ID、bootstrap 输出边界和已解析的 POSIX session ID。setup 期间取消或 service dispose 会在拒绝前执行自有回滚；provisional terminal handle 不会跨过服务。
 - Handle 报告前台进程组、发送真实信号，并跟踪在途 write、inspection 和 signal。可重试且须等待的 `terminate()` 会拒绝新操作、结算已有操作，并终止远端 terminal session 中仍可见的每个存活进程组。仅含 zombie 的进程组视为完全停稳。
 - Setup 与 teardown 负责各自的私有状态目录。`SandboxNotFoundError` 证明远端执行世界无法继续保留工作，因此视为完全停稳；其他清理失败仍可观察。
-- Prompt 检测、scrollback、readiness、sandbox policy 与 owner 生命周期仍归 [`dsh-terminal-bash`](../../terminal/terminal-bash/README.md) 所有。
+- Prompt 检测、scrollback、readiness、sandbox policy 与 owner 生命周期仍归 [`dsh-terminal-bash`](../../terminal/terminal-bash/README.zh.md) 所有。
 
 ## 模型体验
 

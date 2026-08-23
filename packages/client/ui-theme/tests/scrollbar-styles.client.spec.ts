@@ -207,10 +207,12 @@ const SURFACE_PROPERTIES = ['background', 'background-color']
  * `--dsw-alias-interactive-*`, and `--dsw-alias-markdown-*` reach the same dark
  * elevation rungs while naming a control or an inline span, which no scroll
  * container renders its bar against (ChatView's floating `.toBottom` pill,
- * CodeBlock's banner). Family, not geometry: a floating button legitimately
+ * CodeBlock's banner). `--dsw-specific-selector` is likewise a control token,
+ * not a surface token. Family, not geometry: a floating button legitimately
  * carries a radius, a shadow, and a fixed size, so shape cannot separate them.
  */
 const SURFACE_TOKEN_PATTERN = /^--dsw-(?:alias-bg-|specific-)/
+const NON_SURFACE_TOKENS = new Set(['--dsw-specific-selector'])
 
 /**
  * The palette's own dark elevation ladder, resolved from `design-platform.css`:
@@ -242,7 +244,9 @@ function elevatedRungs(): Set<string> {
   const rungs = new Set([resolve('--dsw-alias-bg-layer-2'), resolve('--dsw-alias-bg-layer-3')])
   const tokens = new Set<string>()
   for (const name of definitions.keys()) {
-    if (SURFACE_TOKEN_PATTERN.test(name) && rungs.has(resolve(name))) tokens.add(name)
+    if (SURFACE_TOKEN_PATTERN.test(name) && !NON_SURFACE_TOKENS.has(name) && rungs.has(resolve(name))) {
+      tokens.add(name)
+    }
   }
   return tokens
 }
@@ -569,6 +573,7 @@ describe('elevated surface rebinds', () => {
     // the check would say nothing.
     expect(elevatedSurfaces).not.toContain('--dsw-alias-bg-base')
     expect(elevatedSurfaces).not.toContain('--dsw-alias-bg-layer-1')
+    expect(elevatedSurfaces).not.toContain('--dsw-specific-selector')
   })
 
   it('every sheet that scrolls on an elevated surface rebinds', () => {

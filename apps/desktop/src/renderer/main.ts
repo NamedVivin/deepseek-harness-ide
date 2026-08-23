@@ -1,12 +1,17 @@
 /** Signed desktop bootloader: fetch the Host graph before importing the shared shell. */
 
-import { parseBootManifest, type DshWindow } from '@deepseek-ai/dsh-client-modules/client'
+import {
+  parseBootManifest, type DshWindow,
+} from '@deepseek-ai/dsh-client-modules/client'
 import { AppWebEntry } from '@deepseek-ai/dsh-client-web'
 import type {
   DesktopRendererBridge,
   DesktopRendererLifecycleHost,
   DesktopPreloadApi,
 } from '@deepseek-ai/dsh-client-connection-desktop/protocol'
+import {
+  installDesktopModuleFacade, preloadDesktopModuleBundles,
+} from './module-bootstrap.ts'
 import { createDesktopRendererCapabilities } from './preload-adapter.ts'
 
 declare global {
@@ -31,6 +36,8 @@ async function start(): Promise<void> {
   ;(globalThis as DshWindow).__DSH_BOOT__ = graph
   const root = document.getElementById('root')
   if (root === null) throw new Error('desktop boot: missing #root')
+  installDesktopModuleFacade()
+  await preloadDesktopModuleBundles(graph)
   await new AppWebEntry(root).run()
 }
 
