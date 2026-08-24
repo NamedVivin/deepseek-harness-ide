@@ -68,7 +68,7 @@ jobs:
     name: Desktop release scripts
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -122,7 +122,7 @@ jobs:
     env:
       DSH_DESKTOP_SIGNATURE_POLICY: ${{ github.event_name == 'workflow_dispatch' && inputs.verification == 'signed' && 'signed' || 'unsigned' }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           persist-credentials: false
