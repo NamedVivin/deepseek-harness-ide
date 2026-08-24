@@ -12,7 +12,7 @@ The split also hid other drift. The preset mounted one-shot Bash rather than the
 
 ## Decision
 
-The shipped Web `minimal` preset is the sole Web owner of the RL agent composition. It declares an entry-local PTY registry and local backend, persistent `bash` with the RL environment description and 300-second timeout, and `str_replace_editor`. Tool presentation remains a deployment choice. The later [bare two-tool runtime decision](../feature/2026-08-11-minimal-profiles-bare-two-tool-runtime.md) supersedes this note's original compaction and filesystem-provider choices: the current preset mounts an entry-local `fs-local` provider and no compaction backend. The editor accepts no `requireAbsolutePath` setting because absolute paths are its unconditional contract.
+The shipped Web `minimal` preset is the sole Web owner of the RL agent composition. It declares entry-local `terminals` and `subprocessPty` realms for its terminal registry and local PTY provider, persistent `bash` with the RL environment description and 300-second timeout, and `str_replace_editor`. Tool presentation remains a deployment choice. The later [bare two-tool runtime decision](../feature/2026-08-11-minimal-profiles-bare-two-tool-runtime.md) supersedes this note's original compaction and filesystem-provider choices: the current preset mounts an entry-local `fs-local` provider and no compaction backend. The editor accepts no `requireAbsolutePath` setting because absolute paths are its unconditional contract.
 
 The preset persona is exactly `You are a helpful software engineer assistant.`, sets `complete: true`, and suppresses runtime context for its agent scope. A complete `PromptSection` participates in ordinary assembly so tools, variables, and cooperative listeners still resolve; after the `system-prompt/assemble` waterfall, the prompt registry restores a detached copy of that section as the sole system-prompt section and discards every dynamic context contribution. Multiple effective complete sections reject assembly. These final registry constraints prevent harness identity, Web orientation, tool guidance, an assembly listener, sandbox policy, approval policy, delegation, or another dynamic context provider from adding model input.
 
@@ -20,7 +20,7 @@ The process-wide `core-web.cordis.yml` patch is absent. Browser UI, workspace at
 
 ## Verification
 
-System-prompt and persona package tests prove final complete-section and runtime-context suppression, including waterfall mutation and duplicate rejection. The shipped-preset composition test asserts the exact prompt, Bash description, absolute editor schema, and two-tool catalog under the default native presentation. The keyless Web replay sends a real request through a `minimal` agent while global identity, Web-orientation text, dynamic policy contexts, and a test section are registered, asserts that no runtime-context snapshot exists, the entry-local filesystem is bare, and compaction is absent, then executes two persistent Bash calls to prove environment and cwd state survive and executes the editor through an absolute path.
+System-prompt and persona package tests prove final complete-section and runtime-context suppression, including waterfall mutation and duplicate rejection. The shipped-preset composition test asserts the exact prompt, Bash description, absolute editor schema, and two-tool catalog under the default native presentation. The keyless Web replay mounts the preset without publishing either PTY service process-wide, sends a real request through a `minimal` agent while global identity, Web-orientation text, dynamic policy contexts, and a test section are registered, asserts that no runtime-context snapshot exists, the entry-local filesystem is bare, and compaction is absent, then executes two persistent Bash calls to prove environment and cwd state survive and executes the editor through an absolute path.
 
 The standalone [`minimal.cordis.yml`](../../../../examples/jsonrpc-agent/minimal.cordis.yml) is the complete two-tool composition for the bundled JSON-RPC runtime. The [bare two-tool runtime decision](../feature/2026-08-11-minimal-profiles-bare-two-tool-runtime.md) owns its launch-specific environment configuration, bare filesystem, and absence of compaction. Its keyless SDK replay asserts the assembled system prompt and two-tool catalog, executes persistent Bash across calls, and exercises the editor; the Python SDK tutorial provides the runnable entry point.
 
@@ -32,7 +32,7 @@ The standalone [`minimal.cordis.yml`](../../../../examples/jsonrpc-agent/minimal
 
 **Filter sections only with a prepended waterfall listener.** Rejected because another prepended wrapper can run outside it and append after the filter. Enforcement after the complete waterfall has stable final authority.
 
-**Mount PTY services on the Web host.** Rejected because only the minimal agent consumes them. An entry-local `pty` realm gives the services the same lifetime and scope as their sole consumer without publishing a process-global service from a preset.
+**Mount PTY services on the Web host.** Rejected because only the minimal agent consumes them. Entry-local `terminals` and `subprocessPty` realms give the services the same lifetime and scope as their sole consumer without publishing process-global services from a preset.
 
 ## Consequences
 

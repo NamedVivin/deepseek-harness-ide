@@ -2,9 +2,11 @@
  * Sandbox-consuming bash executor. It wraps the exact local bash argv through
  * `ctx.sandbox`, inherits local process mechanics, and reports the selected
  * mode, enforcement, and denial facts. Positive runner-launch evidence means
- * the command never ran: foreground calls throw `SANDBOX_UNAVAILABLE`, while
- * background processes carry `runnerFailed`; other spawn rejections retain
- * local-executor semantics. The tool owns approval and passes a complete per-call policy.
+ * the command never ran: foreground runs and background starts throw
+ * `SANDBOX_UNAVAILABLE` before publishing an outcome or process. A runner that
+ * starts and then fails is thrown in the foreground or stamped `runnerFailed`
+ * on the background process. Other spawn rejections retain local-executor
+ * semantics. The tool owns approval and passes a complete per-call policy.
  * @module @deepseek-ai/dsh-bash-sandbox
  */
 

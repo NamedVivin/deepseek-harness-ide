@@ -3,8 +3,8 @@
 // block-level immutability (a delta only swaps that block's reference).
 
 import type { StreamChunk } from '@deepseek-ai/dsh-llm/types'
-import type { AssistantBlock, PartialAssistant } from './conversation.ts'
-import { toAssistantBlock } from './conversation.ts'
+import type { AssistantBlock, PartialAssistant } from '../conversation-snapshot.ts'
+import { toAssistantBlock } from '../conversation-snapshot.ts'
 
 /**
  * Whether a stream chunk changes the partial assistant projection shown by the UI.

@@ -396,9 +396,7 @@ export class E2BFileSystem extends FileSystem {
   }
 
   override async listDir(target: FsTarget, signal?: AbortSignal): Promise<FsDirEntry[]> {
-    const info = await this.stat(target, signal)
-    if (info === undefined) throw new FsError(`cannot list "${target.displayPath}": not found`, 'FS_NOT_FOUND')
-    if (info.type !== 'directory') throw new FsError(`cannot list "${target.displayPath}": not a directory`, 'FS_NOT_DIRECTORY')
+    await this.requireDirectory(target, signal)
     try {
       const sandbox = await this.ctx.e2b.getSandbox()
       const listed = await sandbox.files.list(String(target.targetKey), { depth: 1, ...signalOpts(signal) })
@@ -430,9 +428,7 @@ export class E2BFileSystem extends FileSystem {
     options: { maxEntries: number },
     signal?: AbortSignal,
   ): Promise<FsDirEntry[]> {
-    const info = await this.stat(target, signal)
-    if (info === undefined) throw new FsError(`cannot list "${target.displayPath}": not found`, 'FS_NOT_FOUND')
-    if (info.type !== 'directory') throw new FsError(`cannot list "${target.displayPath}": not a directory`, 'FS_NOT_DIRECTORY')
+    await this.requireDirectory(target, signal)
     try {
       const sandbox = await this.ctx.e2b.getSandbox()
       const listed = await this.listDirectoryBoundedRemote(
@@ -595,6 +591,14 @@ export class E2BFileSystem extends FileSystem {
     if (info === undefined) throw new FsError(`cannot read "${target.displayPath}": not found`, 'FS_NOT_FOUND')
     if (info.type !== 'file') throw new FsError(`cannot read "${target.displayPath}": not a regular file`, 'FS_NOT_REGULAR_FILE')
     return info
+  }
+
+  private async requireDirectory(target: FsTarget, signal?: AbortSignal): Promise<void> {
+    const info = await this.stat(target, signal)
+    if (info === undefined) throw new FsError(`cannot list "${target.displayPath}": not found`, 'FS_NOT_FOUND')
+    if (info.type !== 'directory') {
+      throw new FsError(`cannot list "${target.displayPath}": not a directory`, 'FS_NOT_DIRECTORY')
+    }
   }
 
   private checkWriteIntent(existing: EntryInfo | undefined, expected: FsWriteIntent | undefined, target: FsTarget): void {

@@ -643,6 +643,8 @@ function loadBindings(koffi: KoffiModule): WindowsBindings {
   const kernel32 = koffi.load('kernel32.dll')
   const pointer = koffi.pointer('void')
   const pointerPointer = koffi.pointer(pointer)
+  // Each optional Windows backend loads and verifies its own koffi ABI table without importing another provider.
+  /* jscpd:ignore-start */
   const startupInfo = koffi.struct('DSH_GUARDIAN_STARTUPINFOW', {
     cb: 'uint32',
     lpReserved: 'str16',
@@ -663,6 +665,7 @@ function loadBindings(koffi: KoffiModule): WindowsBindings {
     hStdOutput: pointer,
     hStdError: pointer,
   })
+  /* jscpd:ignore-end */
   const processInformation = koffi.struct('DSH_GUARDIAN_PROCESS_INFORMATION', {
     hProcess: pointer,
     hThread: pointer,

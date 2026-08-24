@@ -50,10 +50,14 @@ function fakeHttpServer(
   }
 }
 
-/** Bodyless GET carrying the given headers (enough for the trust fence + bridge). */
-function fakeRequest(headers: Record<string, string>, url = `${API_PATH}/session.list`): IncomingMessage {
+/** Bodyless request carrying the given headers (enough for the trust fence + bridge). */
+function fakeRequest(
+  headers: Record<string, string>,
+  url = `${API_PATH}/session.list`,
+  method = 'GET',
+): IncomingMessage {
   const request = Readable.from([]) as unknown as IncomingMessage
-  Object.assign(request, { url, method: 'GET', headers })
+  Object.assign(request, { url, method, headers })
   return request
 }
 
@@ -182,6 +186,30 @@ describe('connection node half', () => {
       expect(state.body).toBe('upgrade required')
     }
     await dispose()
+  })
+
+  it('delegates bodyless ApiProxy GET and HEAD routes through the shared /api handler', async () => {
+    const ctx = new Context()
+    const routes: WebRoute[] = []
+    const sessionLog = vi.fn<ApiProxy['downloads']['sessionLog']>(async () => new Response('archive', {
+      status: 200,
+      headers: { 'content-type': 'application/zip' },
+    }))
+    ctx.provide('webServer', fakeHttpServer(routes, []) as WebServer)
+    ctx.provide('apiProxy', { downloads: { sessionLog } } as unknown as ApiProxy)
+    const fiber = await mountCore(ctx)
+    const url = `${API_PATH}/session.export?sessionId=export-me&includeDescendants=true`
+
+    for (const method of ['GET', 'HEAD']) {
+      const output = fakeResponse()
+      await routes[0]!.handler(fakeRequest({ host: '127.0.0.1:3080' }, url, method), output.response)
+      expect(output.state.status).toBe(200)
+    }
+    expect(sessionLog.mock.calls.map(([request]) => request)).toEqual([
+      { sessionId: 'export-me', includeDescendants: true },
+      { sessionId: 'export-me', includeDescendants: true },
+    ])
+    await fiber.dispose()
   })
 
   it('rejects an untrusted WebSocket upgrade before protocol negotiation', async () => {

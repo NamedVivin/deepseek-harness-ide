@@ -6,9 +6,30 @@
  * the concrete class. Widening this interface is the explicit act of
  * widening what features may do to the workspaces domain.
  */
-import type { DirectoryListing, SessionId, WorkspaceId, WorkspaceView } from '@deepseek-ai/dsh-api-remotes/client'
-import type { WorkspaceListState } from '../workspaces/service.ts'
+import type {
+  DirectoryListing, RpcError, SessionId, WorkspaceId, WorkspaceView,
+} from '@deepseek-ai/dsh-api-remotes/client'
 import type { ObservableSnapshot } from './store.ts'
+
+/** Monotone workspace-list arrival lifecycle, independent from pull activity and errors. */
+export type WorkspaceListPhase = 'pending' | 'ready'
+
+/** Workspace list plus the two-baseline readiness and default-target projection. */
+export interface WorkspaceListState {
+  items: readonly WorkspaceView[]
+  /**
+   * Registry-global archive set in Host order. Grouping surfaces hide these
+   * sessions while their logs and workspace accounting slots remain.
+   */
+  archivedSessionIds: readonly SessionId[]
+  state: 'idle' | 'loading' | 'error'
+  phase: WorkspaceListPhase
+  error: RpcError | null
+  /** True only after both workspace.list and session.list have succeeded. */
+  baselinesReady: boolean
+  /** Most recently active Workspace, derived without changing `items` order. */
+  recentWorkspaceId: WorkspaceId | undefined
+}
 
 /** The workspaces-service face injected as `ctx.workspaces`. */
 export interface IWorkspaces {

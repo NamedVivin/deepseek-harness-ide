@@ -2,7 +2,7 @@
 
 English | [中文](README.zh.md)
 
-Web provider for `@deepseek-ai/dsh-client-connection`. Its Host half binds the logical registry to HTTP POST routes, the `/api/respond` response route, and downlink-only WebSockets for `events.mux` and `events.host`. Its Client half provides `WebApiClient`, generic fetch RPC, loopback classification, and the explicit `?fixture` test mode. The Web bundle selects this package in the `connection-transport` row and mounts the carrier-neutral package separately in the `connection` row.
+Web provider for `@deepseek-ai/dsh-client-connection`. Its Host half binds the logical registry to HTTP POST routes, delegates bodyless ApiProxy GET and HEAD routes through the same `/api` trust fence, owns the `/api/respond` response route, and provides downlink-only WebSockets for `events.mux` and `events.host`. Its Client half provides `WebApiClient`, generic fetch RPC, loopback classification, and the explicit `?fixture` test mode. The Web bundle selects this package in the `connection-transport` row and mounts the carrier-neutral package separately in the `connection` row.
 
 ## Browser trust fence
 

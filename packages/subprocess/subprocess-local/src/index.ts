@@ -18,6 +18,32 @@ import { childEnv, spawnSubprocess } from './spawn.ts'
 import type { LocalSubprocessHandle, SpawnInternals } from './spawn.ts'
 
 /**
+ * Register the common host-exit listener and awaited Cordis teardown used by local subprocess providers.
+ * @param ctx - provider context that owns the teardown effect.
+ * @param label - effect diagnostic label.
+ * @param terminateForHostExit - synchronous final termination invoked during Node exit.
+ * @param dispose - asynchronous provider cleanup invoked during ordinary Cordis disposal.
+ */
+export function registerLocalSubprocessTeardown(
+  ctx: Context,
+  label: string,
+  terminateForHostExit: () => void,
+  dispose: () => Promise<void>,
+): void {
+  ctx.effect(() => {
+    const onHostExit = (): void => { terminateForHostExit() }
+    process.prependListener('exit', onHostExit)
+    return async () => {
+      try {
+        await dispose()
+      } finally {
+        process.off('exit', onHostExit)
+      }
+    }
+  }, label)
+}
+
+/**
  * Local subprocess service: detached process trees, Node-shaped stdio
  * dispositions (raw pipes, inherit, bounded tail-keep collection with spill
  * files), credential-scrubbed environment, and tree-scoped signalling with
@@ -33,18 +59,15 @@ export class LocalSubprocessRuntime extends SubprocessRuntime {
 
   constructor(ctx: Context) {
     super(ctx)
-    ctx.effect(() => {
-      const onHostExit = (): void => { this.terminateForHostExit() }
-      process.prependListener('exit', onHostExit)
-      return async () => {
+    registerLocalSubprocessTeardown(
+      ctx,
+      'local subprocess teardown',
+      () => { this.terminateForHostExit() },
+      async () => {
         this.disposing = true
-        try {
-          await this.disposeManagedProcesses()
-        } finally {
-          process.off('exit', onHostExit)
-        }
-      }
-    }, 'local subprocess teardown')
+        await this.disposeManagedProcesses()
+      },
+    )
   }
 
   private terminateForHostExit(): void {

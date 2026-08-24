@@ -169,6 +169,27 @@ export interface MacOsCapsuleNativeTransport {
   dispose(): Promise<void>
 }
 
+function registerPreparation<Prepared, Owned>(
+  preparedSet: Set<Prepared>,
+  liveSet: Set<Owned>,
+  create: (
+    onResume: (owned: Owned) => void,
+    onRollback: () => void,
+    onRelease: (owned: Owned) => void,
+  ) => Prepared,
+): Prepared {
+  const prepared = create(
+    (owned) => {
+      preparedSet.delete(prepared)
+      liveSet.add(owned)
+    },
+    () => { preparedSet.delete(prepared) },
+    (owned) => { liveSet.delete(owned) },
+  )
+  preparedSet.add(prepared)
+  return prepared
+}
+
 /** macOS supervisor that enforces dual ownership before publication and resume. */
 export class MacOsCapsuleSupervisor implements GuardianProcessSupervisor {
   private readonly prepared = new Set<MacPrepared>()
@@ -199,11 +220,9 @@ export class MacOsCapsuleSupervisor implements GuardianProcessSupervisor {
       await rollbackMacCapsule(capsule, this.mirror, asError(error))
       throw error
     }
-    const prepared = new MacPrepared(capsule, this.mirror, (owned) => {
-      this.prepared.delete(prepared)
-      this.live.add(owned)
-    }, () => { this.prepared.delete(prepared) }, (owned) => { this.live.delete(owned) })
-    this.prepared.add(prepared)
+    const prepared = registerPreparation(this.prepared, this.live, (onResume, onRollback, onRelease) => (
+      new MacPrepared(capsule, this.mirror, onResume, onRollback, onRelease)
+    ))
     // oxlint-disable-next-line typescript/no-unnecessary-condition -- disposal can begin during awaited capsule setup.
     if (this.disposing) {
       await prepared.rollback()
@@ -426,11 +445,9 @@ export class WindowsJobSupervisor implements GuardianProcessSupervisor {
     }
     const ownedJob = job
     const ownedChild = child
-    const prepared = new WindowsPrepared(this.native, ownedJob, ownedChild, (owned) => {
-      this.prepared.delete(prepared)
-      this.live.add(owned)
-    }, () => { this.prepared.delete(prepared) }, (owned) => { this.live.delete(owned) })
-    this.prepared.add(prepared)
+    const prepared = registerPreparation(this.prepared, this.live, (onResume, onRollback, onRelease) => (
+      new WindowsPrepared(this.native, ownedJob, ownedChild, onResume, onRollback, onRelease)
+    ))
     // oxlint-disable-next-line typescript/no-unnecessary-condition -- disposal can begin during awaited process setup.
     if (this.disposing) {
       await prepared.rollback()

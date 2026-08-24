@@ -71,10 +71,13 @@ interface MainSubscription {
 export interface NodeIpcPeer {
   readonly connected?: boolean | undefined
   send?: NonNullable<NodeJS.Process['send']> | undefined
+  // Desktop and guardian own distinct send semantics; only their removable EventEmitter listener subset coincides.
+  /* jscpd:ignore-start */
   on(event: 'message', listener: (value: unknown) => void): unknown
   on(event: 'disconnect', listener: () => void): unknown
   off(event: 'message', listener: (value: unknown) => void): unknown
   off(event: 'disconnect', listener: () => void): unknown
+  /* jscpd:ignore-end */
 }
 
 /** Backward-compatible name for the sidecar-facing Node IPC process. */
@@ -205,11 +208,7 @@ export class ChildProcessDesktopIpcAdapter implements DesktopIpcAdapter {
         removeAbort,
       })
       this.track(this.sendHostRequest(requestId, method, payload, signal).catch((error: unknown) => {
-        const pending = this.pendingHost.get(requestId)
-        if (pending === undefined) return
-        this.pendingHost.delete(requestId)
-        pending.removeAbort()
-        pending.reject(normalizeError(error))
+        rejectPendingRequest(this.pendingHost, requestId, error)
       }))
     })
   }
@@ -251,11 +250,7 @@ export class ChildProcessDesktopIpcAdapter implements DesktopIpcAdapter {
     }
     const abort = new AbortController()
     this.invokes.set(requestId, abort)
-    const operation = raceWithAbort(host.invoke(invocation, abort.signal), abort.signal).then(
-      result => this.sendRendererResult(requestId, { ok: true, value: result }),
-      (error: unknown) => this.sendRendererResult(requestId, { ok: false, error: wireError(error, abort.signal) }),
-    ).finally(() => { this.invokes.delete(requestId) })
-    this.track(operation)
+    this.trackRendererOperation(requestId, host.invoke(invocation, abort.signal), abort)
   }
 
   private startSystem(
@@ -271,11 +266,19 @@ export class ChildProcessDesktopIpcAdapter implements DesktopIpcAdapter {
     const payload = parseRendererSystemRequest(method, rawPayload)
     const abort = new AbortController()
     this.invokes.set(requestId, abort)
-    const operation = raceWithAbort(host.system(method, payload, abort.signal), abort.signal).then(
+    this.trackRendererOperation(requestId, host.system(method, payload, abort.signal), abort)
+  }
+
+  private trackRendererOperation(
+    requestId: DesktopRequestIdType,
+    operation: Promise<unknown>,
+    abort: AbortController,
+  ): void {
+    const tracked = raceWithAbort(operation, abort.signal).then(
       result => this.sendRendererResult(requestId, { ok: true, value: result }),
       (error: unknown) => this.sendRendererResult(requestId, { ok: false, error: wireError(error, abort.signal) }),
     ).finally(() => { this.invokes.delete(requestId) })
-    this.track(operation)
+    this.track(tracked)
   }
 
   private startSubscription(subscriptionId: DesktopRequestIdType, stream: DesktopConnectionStream): void {
@@ -334,14 +337,13 @@ export class ChildProcessDesktopIpcAdapter implements DesktopIpcAdapter {
     requestId: DesktopRequestIdType,
     result: DesktopWireResult<unknown>,
   ): Promise<void> {
-    if (!this.isConnected()) return
-    const bodyId = await this.bodies.send(result)
-    if (!this.isConnected()) return
-    this.endpoint.send({
-      version: DESKTOP_CONNECTION_PROTOCOL_VERSION,
-      type: 'renderer-result',
-      requestId,
-      bodyId,
+    await sendResultBody(() => this.isConnected(), this.bodies, result, (bodyId) => {
+      this.endpoint.send({
+        version: DESKTOP_CONNECTION_PROTOCOL_VERSION,
+        type: 'renderer-result',
+        requestId,
+        bodyId,
+      })
     })
   }
 
@@ -594,11 +596,7 @@ export class DesktopMainIpcPeer implements DesktopRendererBridge {
       this.track(this.bodies.send(payload, signal).then((bodyId) => {
         if (this.connected && this.pending.has(requestId)) this.endpoint.send(control(requestId, bodyId))
       }).catch((error: unknown) => {
-        const pending = this.pending.get(requestId)
-        if (pending === undefined) return
-        this.pending.delete(requestId)
-        pending.removeAbort()
-        pending.reject(normalizeError(error))
+        rejectPendingRequest(this.pending, requestId, error)
       }))
     })
   }
@@ -718,14 +716,13 @@ export class DesktopMainIpcPeer implements DesktopRendererBridge {
     requestId: DesktopRequestIdType,
     result: DesktopWireResult<unknown>,
   ): Promise<void> {
-    if (!this.isConnected()) return
-    const bodyId = await this.bodies.send(result)
-    if (!this.isConnected()) return
-    this.endpoint.send({
-      version: DESKTOP_CONNECTION_PROTOCOL_VERSION,
-      type: 'host-response',
-      requestId,
-      bodyId,
+    await sendResultBody(() => this.isConnected(), this.bodies, result, (bodyId) => {
+      this.endpoint.send({
+        version: DESKTOP_CONNECTION_PROTOCOL_VERSION,
+        type: 'host-response',
+        requestId,
+        bodyId,
+      })
     })
   }
 
@@ -1086,6 +1083,8 @@ function rejectedOnAbort(signal: AbortSignal): Promise<never> {
 
 function raceWithAbort<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
   if (signal.aborted) return Promise.reject(abortReason(signal))
+  // Desktop races normalize operation errors; body acknowledgements allow no signal, and persistence ignores abort after work starts.
+  /* jscpd:ignore-start */
   return new Promise<T>((resolve, reject) => {
     let settled = false
     const finish = (callback: () => void): void => {
@@ -1101,6 +1100,30 @@ function raceWithAbort<T>(operation: Promise<T>, signal: AbortSignal): Promise<T
       (error: unknown) => { finish(() => { reject(normalizeError(error)) }) },
     )
   })
+  /* jscpd:ignore-end */
+}
+
+function rejectPendingRequest<Key, Pending extends { removeAbort(): void; reject(error: unknown): void }>(
+  requests: Map<Key, Pending>,
+  requestId: Key,
+  error: unknown,
+): void {
+  const pending = requests.get(requestId)
+  if (pending === undefined) return
+  requests.delete(requestId)
+  pending.removeAbort()
+  pending.reject(normalizeError(error))
+}
+
+async function sendResultBody(
+  isConnected: () => boolean,
+  bodies: DesktopBodyTransport,
+  result: DesktopWireResult<unknown>,
+  send: (bodyId: DesktopBodyIdType) => void,
+): Promise<void> {
+  if (!isConnected()) return
+  const bodyId = await bodies.send(result)
+  if (isConnected()) send(bodyId)
 }
 
 function isControlBase(value: unknown): value is Record<string, unknown> & { version: 1; type: string } {

@@ -3,6 +3,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type {} from '@deepseek-ai/dsh-attachment'
+import { toFetchHandler } from '@deepseek-ai/dsh-host-apiproxy'
 import {
   clientRequestSchema,
   RpcId,
@@ -167,19 +168,18 @@ export class WebConnectionTransport extends HostConnectionTransport {
           && LOOPBACK_API_METHODS.has(endpoint)) {
           return new Response('forbidden', { status: 403 })
         }
+        // ApiProxy read routes carry no ClientRequest envelope, so the logical
+        // RPC router cannot represent them. Preserve their physical Fetch contract.
+        if (channel === API_PATH && (request.method === 'GET' || request.method === 'HEAD')) {
+          const apiProxy = this.ctx.get('apiProxy')
+          if (apiProxy !== undefined) return toFetchHandler(apiProxy).fetch(request)
+        }
         if (request.method !== 'POST' || endpoint === undefined) {
           return new Response('not found', { status: 404 })
         }
-        const mediaType = request.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase()
-        if (mediaType !== 'application/json') {
-          return new Response('content type must be application/json', { status: 415 })
-        }
-        let body: unknown
-        try {
-          body = await request.json()
-        } catch {
-          return new Response('body is not JSON', { status: 400 })
-        }
+        const json = await readJsonRequest(request)
+        if (!json.ok) return json.response
+        const body = json.value
         const envelope = clientRequestSchema.safeParse(body)
         if (!envelope.success) return invalidEnvelopeResponse(body, envelope.error.issues)
         const message: ClientRequest = envelope.data
@@ -219,22 +219,28 @@ export class WebConnectionTransport extends HostConnectionTransport {
 
   private async respond(host: HostConnectionTransportHost, request: Request): Promise<Response> {
     if (request.method !== 'POST') return new Response('not found', { status: 404 })
-    const mediaType = request.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase()
-    if (mediaType !== 'application/json') {
-      return new Response('content type must be application/json', { status: 415 })
-    }
-    let body: unknown
-    try {
-      body = await request.json()
-    } catch {
-      return new Response('body is not JSON', { status: 400 })
-    }
-    const parsed = clientResponseSchema.safeParse(body)
+    const json = await readJsonRequest(request)
+    if (!json.ok) return json.response
+    const parsed = clientResponseSchema.safeParse(json.value)
     if (!parsed.success) {
       const receipt: RpcReceipt = { accepted: false, reason: 'bad-response' }
       return Response.json(receipt)
     }
     return Response.json(await host.respond(parsed.data, request.signal))
+  }
+}
+
+async function readJsonRequest(
+  request: Request,
+): Promise<{ ok: true; value: unknown } | { ok: false; response: Response }> {
+  const mediaType = request.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase()
+  if (mediaType !== 'application/json') {
+    return { ok: false, response: new Response('content type must be application/json', { status: 415 }) }
+  }
+  try {
+    return { ok: true, value: await request.json() }
+  } catch {
+    return { ok: false, response: new Response('body is not JSON', { status: 400 }) }
   }
 }
 

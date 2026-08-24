@@ -621,14 +621,31 @@ export function exactEditState(text: string, find: string, replace: string, expe
   return hits === expect && landed === 0 ? 'pending' : 'invalid'
 }
 
+/**
+ * Discover current repository files eligible for the generic rescope pass.
+ *
+ * Checks run before commits, so an unstaged rename still leaves the deleted
+ * source path in Git's index while its destination is untracked. The working
+ * tree is authoritative: omit missing index entries and include unignored new
+ * files so the pass validates the same content that will be committed.
+ * @param repoRoot - Git worktree root to inspect.
+ * @returns Eligible repository-relative paths in Git's stable order.
+ */
+export function discoverFiles(repoRoot: string): string[] {
+  return execFileSync(
+    'git',
+    ['ls-files', '-z', '--cached', '--others', '--exclude-standard', '--'],
+    { cwd: repoRoot, encoding: 'utf8' },
+  ).split('\0')
+    .filter(file => file !== '' && existsSync(resolve(repoRoot, file)) && !excluded(file))
+}
+
 function main(): void {
   const args = process.argv.slice(2)
   const mode = args.includes('--apply') ? 'apply' : args.includes('--check') ? 'check' : 'dry'
   const reverse = args.includes('--reverse')
   const all = patterns(reverse)
-  const files = execFileSync('git', ['ls-files', '-z'], { cwd: root, encoding: 'utf8' })
-    .split('\0')
-    .filter(file => file !== '' && !excluded(file))
+  const files = discoverFiles(root)
 
   const counts = new Map<string, { files: number; lines: number }>()
   const failures: string[] = []
@@ -680,7 +697,7 @@ function main(): void {
     if (mode === 'apply') writeFileSync(path, after)
   }
 
-  console.log(`rescope-vendor: ${mode}${reverse ? ' --reverse' : ''} over ${String(files.length)} tracked files`)
+  console.log(`rescope-vendor: ${mode}${reverse ? ' --reverse' : ''} over ${String(files.length)} tracked or unignored files`)
   for (const kind of [...counts.keys()].sort()) {
     const { files: count, lines } = counts.get(kind) ?? { files: 0, lines: 0 }
     console.log(`  ${kind.padEnd(24)} ${String(count).padStart(4)} file(s), ${String(lines)} line(s)`)

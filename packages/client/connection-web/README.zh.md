@@ -2,7 +2,7 @@
 
 [English](README.md) | 中文
 
-`@deepseek-ai/dsh-client-connection` 的 Web provider。Host 半侧把逻辑 registry 绑定到 HTTP POST route、`/api/respond` 响应 route，以及 `events.mux` 与 `events.host` 的只下行 WebSocket。Client 半侧提供 `WebApiClient`、通用 fetch RPC、loopback 判定，以及显式的 `?fixture` 测试模式。Web bundle 在 `connection-transport` row 选择本包，并在独立的 `connection` row 挂载载体中立包。
+`@deepseek-ai/dsh-client-connection` 的 Web provider。Host 半侧把逻辑 registry 绑定到 HTTP POST route，通过同一 `/api` 信任栅栏委托不带 body 的 ApiProxy GET 和 HEAD route，负责 `/api/respond` 响应 route，并提供 `events.mux` 与 `events.host` 的只下行 WebSocket。Client 半侧提供 `WebApiClient`、通用 fetch RPC、loopback 判定，以及显式的 `?fixture` 测试模式。Web bundle 在 `connection-transport` row 选择本包，并在独立的 `connection` row 挂载载体中立包。
 
 ## 浏览器信任栅栏
 

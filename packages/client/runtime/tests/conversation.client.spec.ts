@@ -1,9 +1,9 @@
-/** Assistant block classifier (moved here with sessions/conversation.ts). */
+/** Assistant block classifier coverage for the shared conversation snapshot. */
 
 import { describe, expect, it } from 'vitest'
 import { AttachmentId } from '@deepseek-ai/dsh-attachment'
 import type { ContentBlock } from '@deepseek-ai/dsh-api-remotes/client'
-import { toAssistantBlock, toAssistantBlocks } from '../src/client/sessions/conversation.ts'
+import { toAssistantBlock, toAssistantBlocks } from '../src/client/conversation-snapshot.ts'
 
 describe('toAssistantBlock', () => {
   it('classifies the four block shapes', () => {

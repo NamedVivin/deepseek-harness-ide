@@ -10,15 +10,18 @@ import type {
 // plugin-to-plugin value imports are a bundle purity error.
 import { transportError } from '@deepseek-ai/dsh-host-apiproxy/api'
 import { mergeOrderedBaseline } from '../ordered-baseline.ts'
+import type {
+  SessionListPhase, SessionSearchResultItem, SubagentCatalogSnapshot,
+} from '../contract/sessions.ts'
 import type { ConversationRuntime } from './conversation-assembler.ts'
 import type { SessionListEntry, TitledSessionSummary } from './lineage.ts'
 import { flattenLineage } from './lineage.ts'
-import type { PendingInteractionStatus } from './pending.ts'
+import type { PendingInteractionStatus } from '../pending.ts'
 // Type-only merge edge: the title domain's client-namespace outlet declares
 // the 'title' projection key this manager projects into list rows (and any
 // useProjection('title') consumer reads). Zero value imports by construction.
 import type {} from '@deepseek-ai/dsh-session-title/client'
-import { Notifier } from './notifier.ts'
+import { Notifier } from '../notifier.ts'
 import { ProjectionValueStore } from './projection-store.ts'
 import { Session } from './session.ts'
 import type { SessionRemotes } from './remotes.ts'
@@ -31,14 +34,6 @@ import type { SessionRemotes } from './remotes.ts'
  * re-pulls ride the `state`/`error` axis, which is where failure is modeled
  * (no `error` phase here; that would duplicate `state`).
  */
-export type SessionListPhase = 'pending' | 'ready'
-
-/** Request-local content hit returned to sidebar search consumers. */
-export interface SessionSearchResultItem {
-  sessionId: SessionId
-  snippet: string
-}
-
 /** Immutable session-list snapshot for useSessionList. */
 export interface SessionListSnapshot {
   items: readonly SessionListEntry[]
@@ -52,12 +47,6 @@ export interface SessionListSnapshot {
   /** Background jobs per session; an absent key is an empty set. */
   jobsBySession: Readonly<Record<SessionId, readonly JobView[]>>
   currentAddress: SubagentAddress | undefined
-}
-
-/** One parent-addressed durable catalog projected through the sessions snapshot. */
-export interface SubagentCatalogSnapshot extends SubagentCatalog {
-  state: 'loading' | 'ready' | 'error'
-  error: RpcError | null
 }
 
 interface CatalogInflight {

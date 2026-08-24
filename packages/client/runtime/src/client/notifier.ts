@@ -10,7 +10,7 @@
 // swallow the notification — push subscribers (object-layer watchers) would
 // otherwise starve whenever any reader pulls first.
 
-/** Subscription + batched notification primitive (shared by Session and SessionManager). */
+/** Subscription + batched notification primitive shared across runtime object domains. */
 export class Notifier {
   private listeners = new Set<() => void>()
   private dirty = false

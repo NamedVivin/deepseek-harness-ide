@@ -323,7 +323,7 @@ const SCENARIOS: Scenario[] = [
     posixOnly: true,
   },
   // A valid cwd plus a missing provider executable exercises the assembled
-  // foreground error and background job marker without a platform runner.
+  // foreground and background pre-publication errors without a platform runner.
   {
     name: 'missing-sandbox-runner',
     hasModelTurn: true,

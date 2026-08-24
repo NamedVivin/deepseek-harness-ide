@@ -13,9 +13,9 @@
     complete: true
     includeRuntimeContext: false
 
-# The PTY registry is an agent-owned service, so it lives in an entry-local
-# realm. The backend still consumes the host sandbox policy and subprocess
-# implementation, while the tool registers into this agent's scoped catalog.
+# The terminal registry and PTY provider are agent-owned services, so both live
+# in entry-local realms. The backend still consumes the host sandbox policy,
+# while the tool registers into this agent's scoped catalog.
 # Exactly one shell stack mounts per host: the bash stack gates off win32 and
 # its pwsh twin gates off POSIX, mirroring the one-shot shell rows.
 - id: persistent-shell
@@ -23,6 +23,7 @@
   group: true
   isolate:
     terminals: true
+    subprocessPty: true
   config:
     - id: subprocess-pty
       name: '@deepseek-ai/dsh-subprocess-pty-local'

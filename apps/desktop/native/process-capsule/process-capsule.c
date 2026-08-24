@@ -398,6 +398,7 @@ static int supervisor_main(const TargetSpec *spec, int main_liveness_fd, long po
   int64_t deadline = 0;
   int capsule_status = 0;
   int capsule_reaped = 0;
+  int event_source_exhausted = 0;
 
   for (;;) {
     struct pollfd fds[3] = {
@@ -417,8 +418,8 @@ static int supervisor_main(const TargetSpec *spec, int main_liveness_fd, long po
     }
     if ((fds[2].revents & POLLIN) != 0) {
       EventFrame event;
-      if (read_exact(events[0], &event, sizeof(event)) == 1 && event.magic == CAPSULE_MAGIC &&
-          event.version == CAPSULE_VERSION) {
+      int event_result = read_exact(events[0], &event, sizeof(event));
+      if (event_result == 1 && event.magic == CAPSULE_MAGIC && event.version == CAPSULE_VERSION) {
         if (event.type == EVENT_PREPARED) {
           target = event.pid;
           pgid = event.pgid;
@@ -428,7 +429,15 @@ static int supervisor_main(const TargetSpec *spec, int main_liveness_fd, long po
           terminate_and_join(capsule, pgid, spec->grace_ms, poll_ms);
           return 0;
         }
+      } else if (event_result != 1 && liveness_lost(fds[2].revents)) {
+        close(events[0]);
+        events[0] = -1;
+        event_source_exhausted = 1;
       }
+    } else if (liveness_lost(fds[2].revents)) {
+      close(events[0]);
+      events[0] = -1;
+      event_source_exhausted = 1;
     }
     if ((fds[0].revents & POLLIN) != 0) {
       CommandFrame command;
@@ -461,26 +470,28 @@ static int supervisor_main(const TargetSpec *spec, int main_liveness_fd, long po
       pid_t waited = waitpid(capsule, &capsule_status, WNOHANG);
       if (waited == capsule) capsule_reaped = 1;
     }
+    if (capsule_reaped && event_source_exhausted && !target_outcome_sent && !terminating) {
+      send_event(STDOUT_FILENO, EVENT_ERROR,
+                 WIFEXITED(capsule_status) ? WEXITSTATUS(capsule_status) : ECHILD,
+                 target, pgid, 0, WIFSIGNALED(capsule_status) ? WTERMSIG(capsule_status) : 0);
+      terminate_and_join(capsule, pgid, spec->grace_ms, poll_ms);
+      return 1;
+    }
     if (terminating && !forced && monotonic_milliseconds() >= deadline && group_exists(pgid)) {
       forced = 1;
       (void)kill(-pgid, SIGKILL);
     }
     if (!group_zero_sent && !group_exists(pgid)) {
-      group_zero_sent = 1;
-      if (!target_outcome_sent) {
+      /* A vanished group does not prove that the capsule's queued EXIT has been drained. */
+      if (!target_outcome_sent && terminating && capsule_reaped && event_source_exhausted) {
         int synthetic_signal = forced ? SIGKILL : SIGTERM;
         send_event(STDOUT_FILENO, EVENT_EXIT, 0, target, pgid, 0, synthetic_signal);
         target_outcome_sent = 1;
       }
-      send_event(STDOUT_FILENO, EVENT_GROUP_ZERO, 0, target, pgid, 0, 0);
-    }
-    if (capsule_reaped && liveness_lost(fds[2].revents) &&
-        (fds[2].revents & POLLIN) == 0 && !target_outcome_sent && !terminating) {
-      send_event(STDOUT_FILENO, EVENT_ERROR,
-                 WIFEXITED(capsule_status) ? WEXITSTATUS(capsule_status) : ECHILD,
-                 target, pgid, 0, WIFSIGNALED(capsule_status) ? WTERMSIG(capsule_status) : 0);
-      terminating = 1;
-      deadline = monotonic_milliseconds();
+      if (target_outcome_sent) {
+        group_zero_sent = 1;
+        send_event(STDOUT_FILENO, EVENT_GROUP_ZERO, 0, target, pgid, 0, 0);
+      }
     }
   }
 }

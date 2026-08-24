@@ -6,16 +6,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { collectReadable, OutputCollector } from '@deepseek-ai/dsh-subprocess-collector'
 import { runOutputCollectorContract } from './contract.ts'
 
-const { failNextClose, failNextUnlink, failNextWrite } = vi.hoisted(() => ({
+const { failNextClose, failNextUnlink, failNextWrite, mkdtempCalls } = vi.hoisted(() => ({
   failNextClose: { value: false },
   failNextUnlink: { value: false },
   failNextWrite: { value: false },
+  mkdtempCalls: { value: 0 },
 }))
 
 vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs')>()
   return {
     ...actual,
+    mkdtempSync(...args: Parameters<typeof actual.mkdtempSync>): ReturnType<typeof actual.mkdtempSync> {
+      mkdtempCalls.value += 1
+      return Reflect.apply(actual.mkdtempSync, actual, args)
+    },
     closeSync(fd: number): void {
       if (failNextClose.value) {
         failNextClose.value = false
@@ -42,8 +47,28 @@ vi.mock('node:fs', async (importOriginal) => {
 
 let spillDir: string
 
-beforeEach(() => { spillDir = mkdtempSync(join(tmpdir(), 'dsh-subprocess-collector-')) })
+beforeEach(() => {
+  spillDir = mkdtempSync(join(tmpdir(), 'dsh-subprocess-collector-'))
+  mkdtempCalls.value = 0
+})
 afterEach(() => { rmSync(spillDir, { recursive: true, force: true }) })
+
+describe('default spill directory allocation', () => {
+  it('waits for the first actual spill and skips allocation when spill is disabled', () => {
+    const memoryOnly = new OutputCollector({ maxBytes: 4, label: 'stdout' })
+    memoryOnly.push(Buffer.from('abcdefgh'))
+    expect(memoryOnly.readFrom(0)).toEqual({ text: 'efgh', nextOffset: 8, lossy: true })
+    expect(mkdtempCalls.value).toBe(0)
+
+    const spilling = new OutputCollector({ maxBytes: 4, maxSpillBytes: 100, label: 'stderr' })
+    spilling.push(Buffer.from('abcd'))
+    expect(mkdtempCalls.value).toBe(0)
+    spilling.push(Buffer.from('efgh'))
+    expect(mkdtempCalls.value).toBe(1)
+    expect(spilling.provisionalSpillPath).toBeDefined()
+    spilling.fail()
+  })
+})
 
 runOutputCollectorContract(() => spillDir)
 

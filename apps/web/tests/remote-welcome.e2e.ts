@@ -23,6 +23,9 @@ describe.skipIf(MODE === 'record')('web e2e: remote welcome notice', () => {
       remoteAuthority: 'remote.localhost',
       welcomeNoticePending: true,
     })
+    expect([...scaffold.ctx.loader.entries()]
+      .find(entry => entry.options.id === 'connection-transport')?.options.config)
+      .toMatchObject({ trustedHosts: ['remote.localhost'] })
     browser = await chromium.launch()
     page = await browser.newPage({
       viewport: { width: 1440, height: 960 },

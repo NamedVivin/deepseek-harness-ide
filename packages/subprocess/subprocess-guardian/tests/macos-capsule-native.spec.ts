@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process'
 import { mkdtempSync } from 'node:fs'
+import { rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -53,16 +54,23 @@ async function fixture(): Promise<{
   })
   await transport.init()
   let keeperOpen = true
+  let directoryPresent = true
   const closeKeeper = async (): Promise<void> => {
     if (!keeperOpen) return
     keeperOpen = false
     keeper.kill('SIGKILL')
     await keeperExited
   }
+  const dispose = async (): Promise<void> => {
+    await closeKeeper()
+    if (!directoryPresent) return
+    directoryPresent = false
+    await rm(directory, { force: true, recursive: true })
+  }
   return {
     transport,
     closeMainLiveness: closeKeeper,
-    disposeLiveness: closeKeeper,
+    disposeLiveness: dispose,
   }
 }
 
@@ -77,6 +85,122 @@ function processGroupExists(processGroupId: number): boolean {
 }
 
 native('native process capsule', () => {
+  it('preserves real outcomes when quick targets empty the group before queued events are drained', async () => {
+    const value = await fixture()
+    try {
+      for (let iteration = 0; iteration < 32; iteration++) {
+        const prepared = await value.transport.prepare({
+          argv: ['/usr/bin/true'],
+          cwd: process.cwd(),
+          env: { PATH: '/usr/bin:/bin' },
+          stdio: { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' },
+          graceMs: 100,
+        }, new AbortController().signal)
+        await prepared.confirmOwnership('main-receipt')
+        const owned = await prepared.resume()
+        await expect(owned.done).resolves.toEqual({ exitCode: 0, signal: null })
+        await expect(owned.waitForExit()).resolves.toBe(true)
+        await owned.release()
+      }
+    } finally {
+      await value.transport.dispose()
+      await value.disposeLiveness()
+    }
+  }, 15_000)
+
+  it('preserves a TERM handler exit outcome before reporting the process group empty', async () => {
+    const value = await fixture()
+    try {
+      for (let iteration = 0; iteration < 8; iteration++) {
+        const prepared = await value.transport.prepare({
+          argv: [
+            process.execPath,
+            '-e',
+            "process.on('SIGTERM', () => process.exit(42)); process.stdout.write('ready'); setInterval(() => {}, 1_000)",
+          ],
+          cwd: process.cwd(),
+          env: { PATH: '/usr/bin:/bin' },
+          stdio: { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' },
+          graceMs: 1_000,
+        }, new AbortController().signal)
+        const ready = Promise.withResolvers<undefined>()
+        let output = ''
+        prepared.stdout?.on('data', (chunk) => {
+          output += String(chunk)
+          if (output.includes('ready')) ready.resolve(undefined)
+        })
+        await prepared.confirmOwnership('main-receipt')
+        const owned = await prepared.resume()
+        await ready.promise
+        await owned.terminate()
+        await expect(owned.done).resolves.toEqual({ exitCode: 42, signal: null })
+        await expect(owned.waitForExit()).resolves.toBe(true)
+        await owned.release()
+      }
+    } finally {
+      await value.transport.dispose()
+      await value.disposeLiveness()
+    }
+  }, 15_000)
+
+  it('synthesizes SIGKILL after initiated termination exhausts the capsule event source', async () => {
+    const value = await fixture()
+    try {
+      const prepared = await value.transport.prepare({
+        argv: [
+          process.execPath,
+          '-e',
+          "process.on('SIGTERM', () => {}); process.stdout.write('ready'); setInterval(() => {}, 1_000)",
+        ],
+        cwd: process.cwd(),
+        env: { PATH: '/usr/bin:/bin' },
+        stdio: { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' },
+        graceMs: 50,
+      }, new AbortController().signal)
+      const ready = Promise.withResolvers<undefined>()
+      let output = ''
+      prepared.stdout?.on('data', (chunk) => {
+        output += String(chunk)
+        if (output.includes('ready')) ready.resolve(undefined)
+      })
+      await prepared.confirmOwnership('main-receipt')
+      const owned = await prepared.resume()
+      await ready.promise
+      await owned.terminate()
+      await expect(owned.done).resolves.toEqual({ exitCode: null, signal: 'SIGKILL' })
+      await expect(owned.waitForExit()).resolves.toBe(true)
+      await owned.release()
+    } finally {
+      await value.transport.dispose()
+      await value.disposeLiveness()
+    }
+  })
+
+  it('rejects an exhausted capsule event source without synthesizing a target outcome', async () => {
+    const value = await fixture()
+    try {
+      const prepared = await value.transport.prepare({
+        argv: ['/bin/sleep', '30'],
+        cwd: process.cwd(),
+        env: { PATH: '/usr/bin:/bin' },
+        stdio: { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' },
+        graceMs: 100,
+      }, new AbortController().signal)
+      const processGroupId = prepared.processGroupId
+      await prepared.confirmOwnership('main-receipt')
+      const owned = await prepared.resume()
+      process.kill(-processGroupId, 'SIGKILL')
+      await expect(owned.done).rejects.toThrow()
+      await expect.poll(() => processGroupExists(processGroupId)).toBe(false)
+      await expect.poll(() => (
+        value.transport as unknown as { readonly connections: ReadonlySet<unknown> }
+      ).connections.size).toBe(0)
+    } finally {
+      await value.transport.dispose()
+      await value.disposeLiveness()
+    }
+  })
+
   it('publishes a stopped target, relays output, and joins a distinct process group', async () => {
     const value = await fixture()
     try {

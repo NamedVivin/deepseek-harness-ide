@@ -180,7 +180,7 @@ function pnpmScript(id: string, script: string, options: Partial<Gate> = {}): Ga
   }
 }
 
-/** Build official client artifacts inside a CI aggregate without changing sibling gate environments. */
+/** Build official client artifacts for an aggregate without changing sibling gate environments. */
 function ciBuildGate(id = 'build', options: Partial<Gate> = {}): Gate {
   return pnpmScript(id, 'build', {
     ...options,
@@ -241,8 +241,9 @@ export function gatesForMode(selected: Mode): Gate[] {
         pnpmScript('issue-management', 'test:issue-management', { label: 'Issue management policy' }),
         pnpmScript('duplication', 'duplication'),
         snapshotGate(),
-        pnpmScript('build', 'build'),
-        pnpmScript('build:web', 'build:web'),
+        // The unit suite materializes short-lived Oxlint probes inside TypeScript
+        // project inputs. Let their cleanup settle before tsc enumerates sources.
+        ciBuildGate('build', { after: ['test'] }),
         ...hygieneLeafGates({ artifactNeeds: ['build'] }),
         ...docSyncLeafGates({
           docTypecheckNeeds: ['build'],
@@ -279,13 +280,21 @@ function ciSharedStaticGates(): Gate[] {
 }
 
 function ciPrimaryGates(): Gate[] {
+  const coverage = coverageGates().map(gate => gate.id === 'coverage-exempt-heavy'
+    ? {
+      ...gate,
+      // This lane materializes project-local sources. Keep its writes disjoint
+      // from lint and build without making either result suppress the other.
+      after: [...new Set(['lint', 'build', ...(gate.after ?? [])])],
+    }
+    : gate)
   return [
     ...ciSharedStaticGates(),
     typertContractsGate(),
     pnpmScript('typecheck', 'typecheck:contracts-ready', { needs: ['typert-contracts'] }),
     lintGate({ needs: ['typert-contracts'] }),
     pnpmScript('duplication', 'duplication'),
-    ...coverageGates(),
+    ...coverage,
     ...nodeCompatSmokeGates(),
     snapshotGate(),
     ...docSyncLeafGates({

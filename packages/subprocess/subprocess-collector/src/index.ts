@@ -90,7 +90,7 @@ export class OutputCollector implements SubprocessOutputReader {
   private readonly maxBytes: number
   private readonly maxSpillBytes: number | undefined
   private readonly label: string
-  private readonly spillDir: string
+  private spillDir: string | undefined
 
   /**
    * Create one collector. Limits and the path-safe label are validated before any file is created.
@@ -107,7 +107,7 @@ export class OutputCollector implements SubprocessOutputReader {
     this.maxBytes = options.maxBytes
     this.maxSpillBytes = options.maxSpillBytes
     this.label = options.label
-    this.spillDir = options.spillDir ?? privateSpillDir()
+    this.spillDir = options.spillDir
     this.spillDisabled = options.maxSpillBytes === undefined
   }
 
@@ -225,6 +225,7 @@ export class OutputCollector implements SubprocessOutputReader {
     }
     try {
       if (this.spillFd === undefined) {
+        this.spillDir ??= privateSpillDir()
         const path = join(
           this.spillDir,
           `dsh-subprocess-${process.pid}-${++spillCounter}-${randomBytes(6).toString('hex')}-${this.label}.log`,

@@ -14,6 +14,8 @@ Aggregate jobs such as documentation synchronization hide long sequential chains
 
 [scripts/run-gates.ts](../../../../scripts/run-gates.ts) owns the bounded scheduler used by CI, `doc-sync`, and the opt-in `check:all` command. It expands named modes into leaf gates, rejects empty or ambiguous dependency graphs before starting a child, respects artifact dependencies, buffers attributable output by default, reports exit and signal outcomes independently, and accepts `DSH_GATE_CONCURRENCY` when a caller needs a different worker bound. A `needs` edge requires the predecessor to pass and skips its dependent otherwise; an `after` edge waits for any terminal outcome and then permits the follower to run. A gate marked `allowFailure` still reports its result but does not fail the aggregate.
 
+Oxlint contract tests and Typert generator fixtures materialize short-lived TypeScript sources inside compiler project inputs. `check:all` gives its `build` gate a settle-only `after` edge from the repository unit suite, so cleanup finishes before `tsc` enumerates sources. The primary CI graphs order the repository-backed `coverage-exempt-heavy` lane after both lint and build settle, so those readers finish before the lane creates its probes. Both directions keep source readers disjoint from temporary writers without letting a failure suppress independent evidence.
+
 Long coordinator gates whose own subprocesses preserve useful attribution may opt into `streamOutput`. Their stdout and stderr reach the parent immediately without being buffered or printed again at completion. Partitioned coverage and parallel Web snapshots use this mode so a mid-run failure is visible without waiting for sibling work.
 
 The Node 24 consumer job is one ten-gate mode rather than a shell-owned process pool. Its default worker count equals its gate count, while pull-request CI caps active gates at eight and dependencies control readiness. Build and source compatibility start immediately; after build, `publint` and built-package invariant validation run in parallel. Lint, both snapshot suites, documentation typechecking, NodeNext type checks, and built-bin smokes wait for the invariant validator to remove its temporary package views.
@@ -24,7 +26,7 @@ The per-gate package scripts remain the vocabulary for ad hoc local runs. `hygie
 
 ## Verification
 
-[scripts/run-gates.spec.ts](../../../../scripts/run-gates.spec.ts) rejects invalid graphs before the executor runs, pins pass-required and settle-only ordering, pins the hygiene, consumer, and native Windows inventories and their failure semantics, exercises signal termination through a real child process, and proves that streamed output is immediate and unbuffered. [scripts/publint-all.spec.ts](../../../../scripts/publint-all.spec.ts) rejects a missing public export before downstream artifact consumers run.
+[scripts/run-gates.spec.ts](../../../../scripts/run-gates.spec.ts) rejects invalid graphs before the executor runs, pins pass-required and settle-only ordering including the local and primary probe-ordering edges, pins the hygiene, consumer, and native Windows inventories and their failure semantics, exercises signal termination through a real child process, and proves that streamed output is immediate and unbuffered. [scripts/publint-all.spec.ts](../../../../scripts/publint-all.spec.ts) rejects a missing public export before downstream artifact consumers run.
 
 ## Alternatives considered
 

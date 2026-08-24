@@ -8,7 +8,7 @@
 import { Context } from '@deepseek-ai/cordis'
 import * as nodePty from 'node-pty'
 import type { IPtyForkOptions } from 'node-pty'
-import { childEnv } from '@deepseek-ai/dsh-subprocess-local'
+import { childEnv, registerLocalSubprocessTeardown } from '@deepseek-ai/dsh-subprocess-local'
 import { SubprocessPtyRuntime } from '@deepseek-ai/dsh-subprocess-pty'
 import type { SubprocessTerminalHandle, SubprocessTerminalSpawnSpec } from '@deepseek-ai/dsh-subprocess-pty'
 import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
@@ -25,18 +25,15 @@ export class LocalSubprocessPtyRuntime extends SubprocessPtyRuntime {
 
   constructor(ctx: Context) {
     super(ctx)
-    ctx.effect(() => {
-      const onHostExit = (): void => { this.terminateForHostExit() }
-      process.prependListener('exit', onHostExit)
-      return async () => {
+    registerLocalSubprocessTeardown(
+      ctx,
+      'local subprocess PTY teardown',
+      () => { this.terminateForHostExit() },
+      async () => {
         this.disposing = true
-        try {
-          await this.disposeTerminals()
-        } finally {
-          process.off('exit', onHostExit)
-        }
-      }
-    }, 'local subprocess PTY teardown')
+        await this.disposeTerminals()
+      },
+    )
   }
 
   /** @inheritdoc */

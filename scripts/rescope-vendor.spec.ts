@@ -4,8 +4,12 @@
  * rejected rather than applied again.
  */
 
+import { execFileSync } from 'node:child_process'
+import { mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { exactEditState } from './rescope-vendor.ts'
+import { discoverFiles, exactEditState } from './rescope-vendor.ts'
 
 const ANCHOR = '\n## Sync procedure'
 const INSERTED = `\n15. **rescope**: one log entry.\n${ANCHOR}`
@@ -37,5 +41,24 @@ describe('exactEditState', () => {
     // A moved or partially applied site: neither state is complete.
     expect(exactEditState('a = 1\nb = 2\n', 'a = 1', 'b = 2', 1)).toBe('invalid')
     expect(exactEditState('x\n', 'a = 1', 'b = 2', 1)).toBe('invalid')
+  })
+})
+
+describe('discoverFiles', () => {
+  it('scans an unstaged rename at its current working-tree path', () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-rescope-files-'))
+    try {
+      const oldPath = join(root, 'old.ts')
+      writeFileSync(oldPath, 'export const oldName = true\n')
+      execFileSync('git', ['init', '--quiet'], { cwd: root })
+      execFileSync('git', ['add', '--', 'old.ts'], { cwd: root })
+
+      unlinkSync(oldPath)
+      writeFileSync(join(root, 'new.ts'), 'export const newName = true\n')
+
+      expect(discoverFiles(root)).toEqual(['new.ts'])
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 })

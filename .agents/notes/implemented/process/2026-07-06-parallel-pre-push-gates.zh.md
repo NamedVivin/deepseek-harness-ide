@@ -14,6 +14,8 @@ Status: implemented
 
 [scripts/run-gates.ts](../../../../scripts/run-gates.ts) 拥有 CI、`doc-sync` 和按需启用的 `check:all` 命令所使用的有界调度器。它将具名模式展开为叶子门禁，在启动子进程前拒绝空的或有歧义的依赖图，遵守产物依赖，默认缓冲可归因的输出，分别报告进程退出与信号终止结果，并在调用方需要不同 worker 上限时接受 `DSH_GATE_CONCURRENCY`。`needs` 边要求前置门禁通过，否则跳过依赖方；`after` 边只等待前置门禁以任意结果结算，随后仍允许后继门禁运行。标记为 `allowFailure` 的门禁仍会报告结果，但不会使聚合流程失败。
 
+Oxlint 约定测试与 Typert 生成器 fixture 会在编译器项目输入内创建短暂存在的 TypeScript 源文件。`check:all` 为其 `build` 门禁添加从仓库单元测试指向的仅等待结算 `after` 边，使清理在 `tsc` 枚举源码前完成。primary CI 图则让仓库内运行的 `coverage-exempt-heavy` lane 等待 lint 与构建都结算，使这些读取方在该 lane 创建探针前完成。两个方向都让源码读取方与临时写入方互不重叠，同时不会让一方失败后阻止另一方提供独立证据。
+
 自身子进程能够保留有效归因的长时间协调门禁可以选择 `streamOutput`。其 stdout 与 stderr 会立即到达父进程，不会被缓冲，也不会在结束时重复打印。分区覆盖率与并行 Web 快照使用该模式，使运行中途的失败无需等待兄弟工作结束就能显示。
 
 Node 24 消费方任务采用单个包含 10 道门禁的模式，而非由 shell 管理的进程池。其默认 worker 数等于门禁数，拉取请求 CI 则把活动门禁限制为 8 道，并由依赖关系控制就绪状态。构建与源码兼容性立即启动；构建完成后，`publint` 与已构建包不变式验证并行运行。lint、两套快照、文档类型检查、NodeNext 类型检查和 built-bin 冒烟测试等待不变式验证器清除临时包视图。
@@ -24,7 +26,7 @@ Node 24 消费方任务采用单个包含 10 道门禁的模式，而非由 shel
 
 ## 验证
 
-[scripts/run-gates.spec.ts](../../../../scripts/run-gates.spec.ts) 在执行器运行前拒绝无效图，锁定必须通过与只等结算两种顺序，锁定 hygiene、消费方与原生 Windows 清单及其失败语义，通过真实子进程验证信号终止，并证明流式输出会立即显示且不被缓冲。[scripts/publint-all.spec.ts](../../../../scripts/publint-all.spec.ts) 在下游产物消费方运行前拒绝缺失的公开导出。
+[scripts/run-gates.spec.ts](../../../../scripts/run-gates.spec.ts) 在执行器运行前拒绝无效图，锁定必须通过与只等结算两种顺序（包括本地与 primary 的探针顺序边），锁定 hygiene、消费方与原生 Windows 清单及其失败语义，通过真实子进程验证信号终止，并证明流式输出会立即显示且不被缓冲。[scripts/publint-all.spec.ts](../../../../scripts/publint-all.spec.ts) 在下游产物消费方运行前拒绝缺失的公开导出。
 
 ## 曾考虑的替代方案
 

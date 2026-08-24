@@ -6,9 +6,9 @@
  * across domains.
  *
  * Layer model (lower may not import higher):
- *   0  contract/            shared contract API (types + slot declarations)
- *   1  <domain>/ + service  domain implementations (skeleton/, chat/, ...)
- *   2  apply.ts, index.ts   assembly point and re-export shell
+ *   0  contract/ + top-level non-assembly files  shared API and implementation
+ *   1  <domain>/                              domain implementations
+ *   2  apply.ts, index.ts                     assembly point and re-export shell
  *
  * Run directly:
  *   pnpm exec tsx scripts/verify-client-domain-graph.ts

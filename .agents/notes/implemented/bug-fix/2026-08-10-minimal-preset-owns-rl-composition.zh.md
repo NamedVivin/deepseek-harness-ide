@@ -12,7 +12,7 @@ Status: implemented
 
 ## 决策
 
-随附的 Web `minimal` preset 是 RL agent 组合在 Web 中的唯一所有者。它声明 entry 本地的 PTY 注册表与本地后端、带 RL 环境描述且超时为 300 秒的持久 `bash`，以及 `str_replace_editor`。工具呈现仍由部署选择。后续的[裸双工具运行时决策](../feature/2026-08-11-minimal-profiles-bare-two-tool-runtime.zh.md)取代了本记录最初的压缩与文件系统提供方选择：当前 preset 挂载 entry 本地的 `fs-local` 提供方，不挂载压缩后端。编辑器不接受 `requireAbsolutePath` 设置，因为要求绝对路径是它的无条件约定。
+随附的 Web `minimal` preset 是 RL agent 组合在 Web 中的唯一所有者。它为 terminal 注册表与本地 PTY 提供方声明 entry 本地的 `terminals` 和 `subprocessPty` realm，并提供带 RL 环境描述且超时为 300 秒的持久 `bash`，以及 `str_replace_editor`。工具呈现仍由部署选择。后续的[裸双工具运行时决策](../feature/2026-08-11-minimal-profiles-bare-two-tool-runtime.zh.md)取代了本记录最初的压缩与文件系统提供方选择：当前 preset 挂载 entry 本地的 `fs-local` 提供方，不挂载压缩后端。编辑器不接受 `requireAbsolutePath` 设置，因为要求绝对路径是它的无条件约定。
 
 preset persona 恰好是 `You are a helpful software engineer assistant.`，它设置 `complete: true`，并为其 agent 作用域抑制 runtime context。complete `PromptSection` 参与常规组装，因此工具、变量和协作式监听器仍会解析；`system-prompt/assemble` waterfall（瀑布式事件）结束后，提示词注册表会将该段落的独立副本恢复为唯一的系统提示词段落，并丢弃每个动态上下文贡献。存在多个有效 complete 段时，组装会被拒绝。这些最终注册表约束可防止 harness 身份、Web 定位、工具引导、组装监听器、沙箱策略、批准策略、委派或其他动态上下文提供方添加模型输入。
 
@@ -20,7 +20,7 @@ preset persona 恰好是 `You are a helpful software engineer assistant.`，它�
 
 ## 验证
 
-系统提示词与 persona 包测试证明了 complete 段最终约束与 runtime-context 抑制，包括 waterfall 修改与重复项拒绝。交付 preset 组合测试在默认原生呈现下断言精确的提示词、Bash 描述、要求绝对路径的编辑器 schema 和双工具目录。无密钥 Web 回放通过 `minimal` agent 发送一个真实请求，同时注册全局身份、Web 定位文本、动态策略上下文和一个测试段落；它断言不存在 runtime-context 快照、entry 本地文件系统是裸后端且压缩不存在，随后执行两次持久 Bash 调用，证明环境与 cwd 状态能够保留，并通过绝对路径执行编辑器。
+系统提示词与 persona 包测试证明了 complete 段最终约束与 runtime-context 抑制，包括 waterfall 修改与重复项拒绝。交付 preset 组合测试在默认原生呈现下断言精确的提示词、Bash 描述、要求绝对路径的编辑器 schema 和双工具目录。无密钥 Web 回放挂载 preset 时不会将任一 PTY 服务发布到进程级，并通过 `minimal` agent 发送一个真实请求，同时注册全局身份、Web 定位文本、动态策略上下文和一个测试段落；它断言不存在 runtime-context 快照、entry 本地文件系统是裸后端且压缩不存在，随后执行两次持久 Bash 调用，证明环境与 cwd 状态能够保留，并通过绝对路径执行编辑器。
 
 独立的 [`minimal.cordis.yml`](../../../../examples/jsonrpc-agent/minimal.cordis.yml) 是内置 JSON-RPC 运行时的完整双工具组合。[裸双工具运行时决策](../feature/2026-08-11-minimal-profiles-bare-two-tool-runtime.zh.md)说明其启动方式专属的环境配置、裸文件系统和无压缩选择。其无密钥 SDK 回放会断言组装后的系统提示词与双工具目录，跨调用执行持久 Bash，并使用编辑器；Python SDK 教程提供可运行的入口。
 
@@ -32,7 +32,7 @@ preset persona 恰好是 `You are a helpful software engineer assistant.`，它�
 
 **仅使用前置 waterfall 监听器筛选段落。** 被拒绝，因为另一个前置包装层可以在该监听器外执行，并在筛选后追加内容。在整个 waterfall 结束后实施约束，才能稳定拥有最终决定权。
 
-**在 Web 宿主上挂载 PTY 服务。** 被拒绝，因为只有 minimal agent 消费这些服务。entry 本地的 `pty` realm 与唯一消费方具有相同的生命周期和作用域，无需由 preset 发布进程级全局服务。
+**在 Web 宿主上挂载 PTY 服务。** 被拒绝，因为只有 minimal agent 消费这些服务。entry 本地的 `terminals` 和 `subprocessPty` realm 与唯一消费方具有相同的生命周期和作用域，无需由 preset 发布进程级全局服务。
 
 ## 后果
 

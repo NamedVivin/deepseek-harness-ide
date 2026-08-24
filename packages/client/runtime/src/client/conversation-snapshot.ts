@@ -1,4 +1,4 @@
-// ConversationSnapshot / ConversationNode: the only data shape the logic layer feeds the UI.
+// ConversationSnapshot / ConversationNode: the shared data shape the object layer feeds the UI.
 // Publication contract: every change swaps the top-level object; unchanged
 // substructures keep their references (the React.memo premise). Chat node and
 // Location stores are stable live readers, so old snapshots are not time-point
@@ -18,7 +18,7 @@ import type { PendingInteraction } from './pending.ts'
 import type { ContextProvenanceView, KnownContextForm } from './context-provenance.ts'
 import type {
   ChatConversationViewNode, ConversationTimelineSnapshot, ConversationViewSnapshotStore,
-} from '../contract/conversation.ts'
+} from './contract/conversation.ts'
 export type { TodoItem }
 
 /** Request configuration recorded for one provider call. */

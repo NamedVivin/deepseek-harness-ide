@@ -2,6 +2,7 @@
 
 import { Buffer } from 'node:buffer'
 import type { SubprocessOutputRead, SubprocessOutputReader } from '@deepseek-ai/dsh-subprocess'
+import { OutputCollector } from '@deepseek-ai/dsh-subprocess-collector'
 
 const BASE64_TEXT = /^[A-Za-z0-9+/]+={0,2}$/u
 
@@ -63,9 +64,7 @@ export class E2BBase64Decoder {
 
 /** Offset reader used for one collect-mode E2B stream. */
 export class E2BOutputReader implements SubprocessOutputReader {
-  private chunks: Buffer[] = []
-  private retainedBytes = 0
-  private totalBytes = 0
+  private readonly tail: OutputCollector
   private spillValid = true
 
   /**
@@ -75,14 +74,16 @@ export class E2BOutputReader implements SubprocessOutputReader {
    * @param spillPath - Remote full-output path.
    */
   constructor(
-    private readonly maxBytes: number,
+    maxBytes: number,
     private readonly maxSpillBytes: number | undefined,
     private readonly spillPath: string,
-  ) {}
+  ) {
+    this.tail = new OutputCollector({ maxBytes, label: 'e2b-output' })
+  }
 
   /** Total bytes observed from the SDK stream. */
   get size(): number {
-    return this.totalBytes
+    return this.tail.size
   }
 
   /** Stop advertising a remote spill whose writer did not reach clean EOF. */
@@ -95,35 +96,15 @@ export class E2BOutputReader implements SubprocessOutputReader {
    * @param bytes - Raw command bytes recovered from the ASCII SDK transport.
    */
   push(bytes: Uint8Array): void {
-    if (bytes.length === 0) return
-    const chunk = Buffer.from(bytes)
-    this.totalBytes += chunk.length
-    this.chunks.push(chunk)
-    this.retainedBytes += chunk.length
-    while (this.retainedBytes > this.maxBytes) {
-      const head = this.chunks[0] as Buffer
-      const excess = this.retainedBytes - this.maxBytes
-      if (head.length <= excess) {
-        this.chunks.shift()
-        this.retainedBytes -= head.length
-      } else {
-        this.chunks[0] = head.subarray(excess)
-        this.retainedBytes -= excess
-      }
-    }
+    this.tail.push(bytes)
   }
 
   /** @inheritdoc */
   readFrom(fromByte: number): SubprocessOutputRead {
-    const retained = Buffer.concat(this.chunks, this.retainedBytes)
-    const firstRetained = this.totalBytes - this.retainedBytes
-    const lossy = fromByte < firstRetained
-    const start = lossy ? 0 : Math.min(retained.length, Math.max(0, fromByte - firstRetained))
+    const retained = this.tail.readFrom(fromByte)
     return {
-      text: retained.subarray(start).toString('utf8'),
-      nextOffset: this.totalBytes,
-      lossy,
-      ...(lossy && this.spillValid && this.maxSpillBytes !== undefined && this.totalBytes <= this.maxSpillBytes
+      ...retained,
+      ...(retained.lossy && this.spillValid && this.maxSpillBytes !== undefined && this.tail.size <= this.maxSpillBytes
         ? { spillPath: this.spillPath }
         : {}),
     }

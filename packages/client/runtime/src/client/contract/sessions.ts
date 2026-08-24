@@ -9,18 +9,117 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import type {
-  RpcResult, SessionId, SubagentAddress,
+  JobView, RpcError, RpcResult, SessionId, SubagentAddress, SubagentCatalog,
 } from '@deepseek-ai/dsh-api-remotes/client'
 import type { HostObservable, SessionMaybeProvideInfo } from '@deepseek-ai/dsh-client-ui-slots'
-import type { AgentContext } from '../agents/scope.ts'
-import type { SessionSearchResultItem } from '../sessions/manager.ts'
-import type {
-  SessionBinding, SessionListState, SessionProvideDescriptor,
-} from '../sessions/service.ts'
+import type { SessionProjectionMap } from '@deepseek-ai/dsh-session-projection/types'
+import type { AgentContext } from '../scope.ts'
+import type { PendingInteractionStatus } from '../pending.ts'
 import type { SessionFace } from './session.ts'
 import type { ObservableSnapshot } from './store.ts'
 
-export type { AgentContext } from '../agents/scope.ts'
+/**
+ * List arrival lifecycle, orthogonal to the pull-activity `state` axis:
+ * `pending` (no successful pull yet — an empty items array means "nothing
+ * arrived", not "nothing exists") → `ready` (at least one pull landed).
+ * Monotone: `ready` never steps back — later pull failures and reconnect
+ * re-pulls ride the `state`/`error` axis, which is where failure is modeled
+ * (there is no `error` phase because that would duplicate `state`).
+ */
+export type SessionListPhase = 'pending' | 'ready'
+
+/** One parent-addressed durable catalog projected through the sessions snapshot. */
+export interface SubagentCatalogSnapshot extends SubagentCatalog {
+  state: 'loading' | 'ready' | 'error'
+  error: RpcError | null
+}
+
+/** Request-local content hit returned to sidebar search consumers. */
+export interface SessionSearchResultItem {
+  sessionId: SessionId
+  snippet: string
+}
+
+/** Session list row projected from the Host list and live stream. */
+export interface SessionSummary {
+  id: SessionId
+  /** Latest durable log-backed title, absent until the Host projects one. */
+  title?: string
+  /** Human-facing label: durable title, project basename, then session id. */
+  displayTitle: string
+  cwd?: string
+  /**
+   * Agent preset this session's agent was composed from; absent when the
+   * deployment composes no presets. The label reflects the running
+   * composition rather than the deployment's current default.
+   */
+  agentPreset?: string
+  parentId?: SessionId
+  /** Coarse durable origin for navigation filtering; not a continuation capability. */
+  origin?: 'subagent'
+  running: boolean
+  /** User interaction currently blocking this session; absent means none. */
+  pendingInteraction?: PendingInteractionStatus
+  /** Finished while not selected and not yet opened; absent means false. */
+  completed?: boolean
+  /**
+   * Host-derived empty-log bit used by New Session reuse. The store retains
+   * every row; presentation consumers decide which blank row is visible.
+   */
+  blank: boolean
+  updatedAt: number
+  /** Current Host-computed projection values retained by the object layer. */
+  projectionValues?: Readonly<Partial<SessionProjectionMap>>
+}
+
+/**
+ * Session list store state. `current` shares one snapshot with the rows, so
+ * sidebar highlighting and SessionProvider read one arbitrated source.
+ */
+export interface SessionListState {
+  /** Host-list order; addressed breadcrumb-only rows are excluded. */
+  ids: SessionId[]
+  /** Host rows plus the current addressed subagent route used by navigation. */
+  byId: Record<SessionId, SessionSummary>
+  current: SessionId | undefined
+  /** Arrival lifecycle; empty with `ready` means the Host list is truly empty. */
+  phase: SessionListPhase
+  /** Direct durable catalogs keyed by their selected parent address. */
+  subagentsByParent: Readonly<Record<SessionId, SubagentCatalogSnapshot>>
+  /** Background jobs per session; an absent key is an empty set, never a sentinel. */
+  jobsBySession: Readonly<Record<SessionId, readonly JobView[]>>
+  /** Current session's catalog-derived address, absent on ordinary navigation. */
+  currentAddress: SubagentAddress | undefined
+}
+
+/** Identity-stable session assembly handle for SessionProvider and inject factories. */
+export interface SessionBinding {
+  readonly sessionId: SessionId
+  /** The outward session face; feature code never receives the concrete class. */
+  readonly session: SessionFace
+  readonly ctx: AgentContext
+}
+
+/** One plugin's per-session standard-props contribution. */
+export interface SessionProvideContribution {
+  /** Bare observable sources, keyed by hook base name (`input` → `useInput`). */
+  hooks?: Record<string, HostObservable<unknown>>
+  /** Stable plain members, including action callbacks, spread into standard props verbatim. */
+  props?: Record<string, unknown>
+}
+
+/**
+ * Static declaration plus per-session resolver for one standard-kit
+ * contribution. Declared names keep the no-session and session faces equal.
+ */
+export interface SessionProvideDescriptor {
+  /** Hook base names (`input` becomes `useInput`). */
+  hooks?: readonly string[]
+  /** Plain standard-prop names. */
+  props?: readonly string[]
+  /** Resolve every declared member for one definite session. */
+  resolve(binding: SessionBinding): SessionProvideContribution
+}
 
 /** The sessions-service face injected as `ctx.sessions`. */
 export interface ISessions {

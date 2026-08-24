@@ -136,6 +136,29 @@ describe('gate graph validation', () => {
     },
   )
 
+  it('gives built snapshots one official complete build after repository-backed test probes', () => {
+    const subject = withPnpmEntrypoint(() => gatesForMode('check-all'))
+    const build = subject.find(gate => gate.id === 'build')
+    const snapshot = subject.find(gate => gate.id === 'snapshot')
+
+    expect(build?.after).toEqual(['test'])
+    expect(build?.needs).toBeUndefined()
+    expect(build?.env).toEqual({ DSH_BUILD_CLIENT_PROFILE: 'official' })
+    expect(snapshot?.needs).toEqual(['build'])
+    expect(subject.some(gate => gate.id === 'build:web')).toBe(false)
+  })
+
+  it.each(['ci-primary', 'ci-linux-primary'] as const)(
+    'settles source readers before the repository-backed coverage probes in %s',
+    (mode) => {
+      const coverage = withPnpmEntrypoint(() =>
+        gatesForMode(mode).find(subject => subject.id === 'coverage-exempt-heavy'))
+
+      expect(coverage?.after).toEqual(['lint', 'build'])
+      expect(coverage?.needs).toBeUndefined()
+    },
+  )
+
   it('keeps native Windows coverage blocking while retaining the observational inventory', () => {
     const complete = withPnpmEntrypoint(() => gatesForMode('ci-windows-complete'))
     const observational = withPnpmEntrypoint(() => gatesForMode('ci-windows-observational'))
@@ -145,6 +168,7 @@ describe('gate graph validation', () => {
     expect(byId.get('coverage')?.allowFailure).not.toBe(true)
     expect(byId.get('coverage-exempt-heavy')?.allowFailure).not.toBe(true)
     expect(byId.get('coverage-exempt-heavy')?.needs).toContain('build')
+    expect(byId.get('coverage-exempt-heavy')?.after).toBeUndefined()
     expect(observational).not.toHaveLength(0)
     for (const gate of observational) {
       const completeGate = byId.get(gate.id)

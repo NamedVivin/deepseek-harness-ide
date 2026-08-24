@@ -18,6 +18,9 @@
       "path": "../../subprocess/subprocess"
     },
     {
+      "path": "../../subprocess/subprocess-collector"
+    },
+    {
       "path": "../../runtime-diagnostics/invariants"
     },
     {

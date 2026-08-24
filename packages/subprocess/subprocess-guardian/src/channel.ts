@@ -471,11 +471,7 @@ export class FramedGuardianPeer {
     const incoming = this.incomingStreams.get(streamId)
     if (incoming !== undefined) {
       this.incomingStreams.delete(streamId)
-      const work = incoming.chain.then(() => incoming.sink.fail(error)).then(
-        () => { incoming.complete.reject(error) },
-        (sinkError: unknown) => { incoming.complete.reject(sinkError) },
-      )
-      this.track(work)
+      this.failIncomingStream(incoming, error)
     }
     const outgoing = this.outgoingStreams.get(streamId)
     if (outgoing !== undefined) {
@@ -611,6 +607,14 @@ export class FramedGuardianPeer {
     void promise.finally(() => { this.work.delete(promise) }).catch(() => undefined)
   }
 
+  private failIncomingStream(incoming: IncomingStream, error: Error): void {
+    const work = incoming.chain.then(() => incoming.sink.fail(error)).then(
+      () => { incoming.complete.reject(error) },
+      (sinkError: unknown) => { incoming.complete.reject(sinkError) },
+    )
+    this.track(work)
+  }
+
   private async shutdown(error: Error): Promise<void> {
     if (this.closedError !== undefined) {
       await Promise.allSettled([...this.work])
@@ -637,13 +641,7 @@ export class FramedGuardianPeer {
       pending.deferred.reject(error)
     }
     this.pendingCalls.clear()
-    for (const incoming of this.incomingStreams.values()) {
-      const work = incoming.chain.then(() => incoming.sink.fail(error)).then(
-        () => { incoming.complete.reject(error) },
-        (sinkError: unknown) => { incoming.complete.reject(sinkError) },
-      )
-      this.track(work)
-    }
+    for (const incoming of this.incomingStreams.values()) this.failIncomingStream(incoming, error)
     this.incomingStreams.clear()
     this.outgoingStreams.clear()
     for (const pending of this.pendingAcks.values()) pending.deferred.reject(error)
