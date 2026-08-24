@@ -565,4 +565,3 @@ export async function spawnE2BTerminal(
     throw error
   }
 }
-
