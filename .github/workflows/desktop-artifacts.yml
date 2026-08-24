@@ -316,7 +316,7 @@ jobs:
         run: ./apps/desktop/scripts/smoke-windows-lifecycle.ps1 -Report "$env:RUNNER_TEMP\desktop-report.json" -SignaturePolicy $env:DSH_DESKTOP_SIGNATURE_POLICY -BaselineSetup "$env:DSH_DESKTOP_BASELINE_SETUP"
 
       - name: Upload verified candidate bytes
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: desktop-${{ matrix.target }}
           path: |
