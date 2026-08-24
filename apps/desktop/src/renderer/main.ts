@@ -2,7 +2,7 @@
 
 import {
   parseBootManifest, type DshWindow,
-} from '@deepseek-ai/dsh-client-modules/client'
+} from '@deepseek-ai/dsh-client-modules/manifest'
 import { AppWebEntry } from '@deepseek-ai/dsh-client-web'
 import type {
   DesktopRendererBridge,
