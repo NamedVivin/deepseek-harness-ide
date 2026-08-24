@@ -59,6 +59,6 @@
     "@deepseek-ai/dsh-agent-presets": "workspace:^",
     "@deepseek-ai/dsh-invariants": "workspace:^",
     "@deepseek-ai/cordis": "workspace:^",
-    "js-yaml": "^4.1.0"
+    "js-yaml": "^5.2.2"
   }
 }
