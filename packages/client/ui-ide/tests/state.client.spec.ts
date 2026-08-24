@@ -36,7 +36,6 @@ describe('IDE state reducer', () => {
     })
     expect(state.tabs).toHaveLength(1)
     expect(state.activeTabId).toBe(first.id)
-    expect(state.visible).toBe(true)
     expect(state.tabs[0]).toMatchObject({ focusLine: 8, focusRevision: 1 })
     const repeated = reduce(state, {
       type: 'begin-open', workspaceId: workspace('w1'), segments: ['src', 'a.ts'], line: 8,
@@ -176,7 +175,6 @@ describe('IDE state reducer', () => {
       type: 'begin-open', workspaceId: workspace('w2'), segments: ['generated.ts'], line: 21,
     })
     expect(requested).toMatchObject({
-      visible: true,
       selectedWorkspaceId: 'w1',
       pendingWorkspaceId: 'w2',
       pendingOpen: { workspaceId: 'w2', segments: ['generated.ts'], line: 21 },
@@ -203,7 +201,7 @@ describe('IDE state reducer', () => {
     expect(reduce(loading, { type: 'edit-tab', id: loading.tabs[0]!.id, content: 'x' }).tabs[0]?.content).toBe('')
   })
 
-  it('activates an adjacent tab after close and toggles preview and visibility', () => {
+  it('activates an adjacent tab after close and updates preview', () => {
     const first = opened('a', ['a.md'])
     const secondId = ideTabId(workspace('w1'), ['b.ts'])
     const two = reduce(
@@ -215,14 +213,11 @@ describe('IDE state reducer', () => {
       { type: 'request-close', id: first.id },
     )
     expect(two.activeTabId).toBe(secondId)
-    const hidden = reduce(two, { type: 'set-visible', visible: false })
-    expect(hidden.tabs).toHaveLength(1)
-    expect(reduce(hidden, { type: 'toggle-visible' }).visible).toBe(true)
+    expect(two.tabs).toHaveLength(1)
   })
 
   it('keeps no-op decisions referentially stable and reports a failed open', () => {
     const first = opened()
-    expect(reduce(first.state, { type: 'set-visible', visible: true })).toBe(first.state)
     expect(reduce(first.state, { type: 'request-workspace', workspaceId: workspace('w1') })).toBe(first.state)
     expect(reduce(first.state, { type: 'discard-workspace' })).toBe(first.state)
     expect(reduce(first.state, { type: 'finish-workspace-if-clean' })).toBe(first.state)
@@ -321,14 +316,14 @@ describe('IDE state reducer', () => {
 describe('IDE store bridge', () => {
   it('replays pre-mount commands once and then writes directly to the root instance', () => {
     const bridge = createIdeStoreBridge()
-    bridge.dispatch({ type: 'set-visible', visible: true })
-    expect(bridge.getSnapshot().visible).toBe(true)
+    bridge.dispatch({ type: 'request-workspace', workspaceId: workspace('w1') })
+    expect(bridge.getSnapshot().selectedWorkspaceId).toBe('w1')
 
     const instance = bridge.handle.create('root')
-    expect(instance.getSnapshot().visible).toBe(true)
+    expect(instance.getSnapshot().selectedWorkspaceId).toBe('w1')
     expect(bridge.handle.create('another')).toBe(instance)
 
-    bridge.dispatch({ type: 'set-visible', visible: false })
-    expect(bridge.getSnapshot().visible).toBe(false)
+    bridge.dispatch({ type: 'begin-open', workspaceId: workspace('w1'), segments: ['a.ts'] })
+    expect(bridge.getSnapshot().tabs).toHaveLength(1)
   })
 })

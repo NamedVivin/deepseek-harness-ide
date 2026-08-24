@@ -4,6 +4,7 @@
    a 2px active bar. */
 
 .root {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -23,6 +24,23 @@
   --dsh-composer-card-max-width: calc(var(--dsh-chat-content-width) + 32px);
   --dsh-composer-side-clearance: 16px;
   --dsh-composer-dock-inset: 8px;
+}
+
+/* Hero and settling phases keep root-scoped utilities on the conversation
+   column's header edge without entering the adjacent details column. Active
+   sessions hand the same output to .headerUtilities instead. */
+.rootHeaderUtilities {
+  position: absolute;
+  top: 12px;
+  right: 28px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rootHeaderUtilities:empty {
+  display: none;
 }
 
 .header {

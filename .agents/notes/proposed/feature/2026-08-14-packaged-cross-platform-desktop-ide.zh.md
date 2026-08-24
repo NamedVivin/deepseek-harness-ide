@@ -69,7 +69,7 @@ DeepSeek Harness 已提供交互式 Web 应用和 headless 应用，但还没有
 
 `desktop-default` 继承 `workspaceFiles` 使用的同一个 root filesystem service instance，因此 Agent file-tool save 和 editor save 共享同一个 per-target lock 与版本权威。它的 filesystem tool consumer 和 policy 不能替换 desktop-owned provider。该不可变第一版 roster 让 PTY 缺失、guardian ownership 和跨界面冲突保证成为每个 desktop Agent graph 的属性，而不是对任意 user composition 的 best-effort validation。
 
-IDE 通过 `shell.overlay` 注册根作用域界面，并在现有 `sidebar.footer.action` slot 中注册 action。与 `conversation.view` 不同，该界面可在会话创建前使用；用户返回现有 conversation UI 时，它也能保留 tab。无需替换根 shell。
+IDE 向 root scope `conversation.header.utilities` 贡献纯图标操作，并向 root scope `shell.editor` 贡献编辑器面板。conversation owner 在 Session 活跃时把该操作放在 header 最右端，在 Session 创建前则放在 conversation 右上角，并且不会覆盖 Session 或详情控件。布局拥有编辑器列的开关状态与首选宽度；关闭该列时面板仍然挂载，因此用户返回时 tab 仍然可用。宽 viewport 下，conversation、details 与 editor 占据相邻列，editor 前方提供可拖动的分隔条。窄 viewport 下，editor 占用折叠 sidebar rail 旁的内容区域。面板包含自己的关闭操作。
 
 ### 桌面运行时和 IPC
 
@@ -145,7 +145,7 @@ Markdown 源码和预览是同一内存 buffer 的两个 view。预览复用现�
 
 新增 effect-scoped asynchronous Client file-opener arbiter：`tryOpen({ sessionId, location }): Promise<'handled' | 'unhandled'>`。把 conversation owner action 从 `openFile(path: string): void` 改为 awaited `openFile(location: FileLocation): Promise<void>`，并让 tool row、生成文件位置、deliverable chip 和 inline mention 保留完整 `{ path, line? }` 值。所有内部 handler 都返回 `unhandled` 后，owner 调用 carrier-scoped fallback：Web 使用现有 operating-system opener，desktop 则报告不支持或工作区外位置，不调用任意路径 API。
 
-桌面 handler 把 session 映射到已注册工作区并调用 `workspaceFiles.resolveLocation`；只有 Host 能把绝对或相对 model-facing path 转换为 canonical segment。Handled text location 会打开或复用匹配 tab、显示 IDE overlay，并在读取后定位可选 line。不支持的文件、目录、工作区外路径和未注册位置在 desktop profile 中只显示 inert diagnostic，不会到达任何操作系统 opener。这样，即使 renderer 被攻破，也不能把工作区内的 script、可执行文件、shortcut 或 application bundle 变成进程执行入口。
+桌面 handler 把 session 映射到已注册工作区并调用 `workspaceFiles.resolveLocation`；只有 Host 能把绝对或相对 model-facing path 转换为 canonical segment。Handled text location 会打开或复用匹配 tab、打开编辑器列，并在读取后定位可选 line。不支持的文件、目录、工作区外路径和未注册位置在 desktop profile 中只显示 inert diagnostic，不会到达任何操作系统 opener。这样，即使 renderer 被攻破，也不能把工作区内的 script、可执行文件、shortcut 或 application bundle 变成进程执行入口。
 
 Web profile 保留当前使用操作系统打开的行为。内部编辑是桌面/IDE profile contribution，而不是对工作区 link 或 conversation UI 的全局更改。
 

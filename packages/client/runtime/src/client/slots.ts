@@ -28,7 +28,7 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
      * The built-in render-tree root hole (seeded by SlotCore): the one slot the
      * shell itself renders, and the ancestor of every other seat. OCCUPIED by
      * ui-layout's AppFrame, which declares the sidebar, conversation, details,
-     * and shell.overlay seats inside it.
+     * shell.editor, and shell.overlay seats inside it.
      *
      * DO NOT register here. This is a single slot, so a second entry does not
      * sit beside the frame — it shadows it, and a dynamically registered entry

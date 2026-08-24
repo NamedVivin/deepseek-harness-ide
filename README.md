@@ -10,6 +10,19 @@ It uses an architecture where **everything is a plugin**, and is powered by [Cor
 
 DeepSeek Harness is currently in _developer preview_ and is iterating rapidly. **THERE WILL BE COMPATIBILITY-BREAKING CHANGES.**
 
+## Integrated IDE
+
+The `ide` profile adds a Workspace file tree and CodeMirror editor beside the agent conversation. It opens supported Agent-produced file locations at the validated line, edits existing regular UTF-8 files with common language highlighting, previews Markdown from the current unsaved buffer, and uses version-checked saves that preserve both the local buffer and latest disk content after a conflict. Wide screens show adjacent conversation and editor panes with a draggable divider; narrow screens give the editor the content area. See [IDE behavior and limitations](packages/client/ui-ide/README.md).
+
+From a source checkout, build once and start the IDE with:
+
+```sh
+pnpm run build
+pnpm dsh --profile ide
+```
+
+The packaged Electron application bundles its own Node.js runtime and opens no TCP listener. Signed installers are not published yet; local unsigned packages are development artifacts. See the [desktop application documentation](apps/desktop/README.md).
+
 ## Run
 
 ### Run from `npm`

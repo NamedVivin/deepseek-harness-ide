@@ -27,7 +27,7 @@ import type { HeroShellProps } from '../src/client/skeleton/EmptyHero.tsx'
 import { InputBar } from '../src/client/skeleton/InputBar.tsx'
 import type { InputBarProps } from '../src/client/skeleton/InputBar.tsx'
 import type {
-  ComposerBarOwnerProps, ConversationHeaderLineageOwnerProps,
+  ComposerBarOwnerProps, ConversationHeaderLineageOwnerProps, ConversationSessionHeaderOwnerProps,
 } from '../src/client/contract/slots.ts'
 import type { ViewTab } from '../src/client/contract/views.ts'
 
@@ -103,6 +103,8 @@ function mount(
     composerBlock?: { reason: string }
     /** Mutable view ledger used by registration-order regressions. */
     viewTabs?: ViewTab[]
+    /** Render the resident root before any strict Session slot is available. */
+    withoutSession?: boolean
   } = {},
 ) {
   const root = sid('root')
@@ -127,7 +129,7 @@ function mount(
       ...listed && options.nestedSubagent === true && { [parent]: parentRow },
       ...listed && { [SID]: childRow },
     },
-    current: SID,
+    current: options.withoutSession === true ? undefined : SID,
     phase: 'ready', subagentsByParent: {}, jobsBySession: {}, currentAddress: undefined,
   })
   const workspaces = createSnapshotStore<WorkspaceListState>(workspaceState(workspaceRows))
@@ -165,6 +167,8 @@ function mount(
       return opts?.fallback ?? null
     }
     if (key === 'conversation.session.header') {
+      if (options.withoutSession === true) return null
+      const headerOwner = owner as ConversationSessionHeaderOwnerProps
       return (
         <ConversationSessionHeader
           sessionId={SID}
@@ -180,11 +184,13 @@ function mount(
           renderSlot={renderSlot as never}
           views={views}
           open={open}
+          rootUtilities={headerOwner.rootUtilities}
           t={t}
         />
       )
     }
     if (key === 'conversation.session') {
+      if (options.withoutSession === true) return null
       return (
         <ConversationSession
           sessionId={SID}
@@ -255,7 +261,7 @@ function mount(
       : (opts?.fallback ?? null)
   )) as ConversationRootProps['renderSlotChain']
   const props: ConversationRootProps = {
-    sessionId: SID,
+    sessionId: options.withoutSession === true ? undefined : SID,
     SessionProvider: ({ children }) => children(SID),
     useSession,
     useSessions: bindSnapshotSelector(sessions),
@@ -275,6 +281,12 @@ function mount(
     pickerOwner: () => pickerOwner,
     rerender: () => { view.rerender(<ConversationRoot {...props} />) },
   }
+}
+
+function expectOneRootUtilityDispatchPerRootRender(slotCalls: readonly string[]): void {
+  const rootUtilities = slotCalls.filter(key => key === 'conversation.header.utilities')
+  const sessionHeaders = slotCalls.filter(key => key === 'conversation.session.header')
+  expect(rootUtilities).toHaveLength(sessionHeaders.length)
 }
 
 describe('Hero chrome', () => {
@@ -384,6 +396,16 @@ describe('ConversationRoot resident composer', () => {
     expect(b.slotCalls).toContain('conversation.session.header.lineage')
     expect(b.slotCalls).toContain('conversation.session.header.actions')
     expect(b.slotCalls).toContain('conversation.session.header.utilities')
+    expectOneRootUtilityDispatchPerRootRender(b.slotCalls)
+    const sessionUtility = b.view.getByTestId('view-conversation.session.header.utilities')
+    const rootUtility = b.view.getByTestId('view-conversation.header.utilities')
+    expect(header?.contains(rootUtility)).toBe(true)
+    expect(rootUtility.parentElement).toBe(sessionUtility.parentElement)
+    expect(Array.from(rootUtility.parentElement?.children ?? [])).toEqual([
+      sessionUtility,
+      rootUtility,
+    ])
+    expect(b.view.container.querySelector('[data-conversation-root-utilities]')).toBeNull()
   })
 
   it('sticky composer seat wraps the whole overlay chain, not only the fallback stack', () => {
@@ -407,8 +429,11 @@ describe('ConversationRoot resident composer', () => {
     // resident composer so the blank → active flip does not remount it.
     const host = b.view.container.querySelector('[data-conversation-scroll]')
     const header = b.view.container.querySelector('header')
+    const rootUtilities = b.view.container.querySelector('[data-conversation-root-utilities]')
     expect(host).not.toBeNull()
     expect(header?.getAttribute('aria-hidden')).toBe('true')
+    expect(rootUtilities?.contains(b.view.getByTestId('view-conversation.header.utilities'))).toBe(true)
+    expectOneRootUtilityDispatchPerRootRender(b.slotCalls)
     expect(b.view.getByText('探索未至之境')).toBeTruthy()
     expect(b.view.getByText('预览版')).toBeTruthy()
     expect(b.view.queryByTestId('view-chat')).toBeNull()
@@ -427,6 +452,17 @@ describe('ConversationRoot resident composer', () => {
     act(() => { owner.onPick(wid('second')) })
     expect(b.retargetWorkspace).toHaveBeenCalledWith(wid('second'))
     expect(b.view.getByText('Selected Folder')).toBeTruthy()
+  })
+
+  it('keeps root utilities available before a Session exists', () => {
+    const b = mount(conversationSnapshot({ composerPhase: 'blank', blank: true }), undefined, undefined, {
+      withoutSession: true,
+    })
+    const rootUtilities = b.view.container.querySelector('[data-conversation-root-utilities]')
+    expect(b.view.container.querySelector('[data-phase]')?.getAttribute('data-phase')).toBe('hero')
+    expect(b.view.container.querySelector('header')).toBeNull()
+    expect(rootUtilities?.contains(b.view.getByTestId('view-conversation.header.utilities'))).toBe(true)
+    expectOneRootUtilityDispatchPerRootRender(b.slotCalls)
   })
 
   it('settling phase: a summary that does not prove the session blank hides the composer while it opens', () => {

@@ -89,11 +89,12 @@ function mount(options: {
   readFile?: ReturnType<typeof vi.fn>
   saveFile?: ReturnType<typeof vi.fn>
   workspaces?: readonly WorkspaceView[]
+  collapsed?: boolean
+  exclusive?: boolean
   initialize?: (store: ReturnType<ReturnType<typeof createIdeStore>['create']>) => void
 } = {}) {
   const store = createIdeStore().create()
   if (options.initialize === undefined) {
-    store.actions.dispatch({ type: 'set-visible', visible: true })
     store.actions.dispatch({ type: 'request-workspace', workspaceId })
   } else {
     options.initialize(store)
@@ -114,8 +115,15 @@ function mount(options: {
     items: options.workspaces ?? [workspace], archivedSessionIds: [], state: 'idle' as const, phase: 'ready' as const,
     error: null, baselinesReady: true, recentWorkspaceId: workspaceId,
   }
-  const view = render(
+  let collapsed = options.collapsed ?? false
+  let exclusive = options.exclusive ?? false
+  const openEditor = vi.fn()
+  const closeEditor = vi.fn()
+  const surface = () => (
     <IdeSurface
+      collapsed={collapsed}
+      exclusive={exclusive}
+      width={collapsed ? 0 : 720}
       useStore={selectorHook(store)}
       actions={store.actions}
       useWorkspaces={selector => selector(workspaces)}
@@ -124,10 +132,29 @@ function mount(options: {
       readFile={readFile as never}
       saveFile={saveFile as never}
       getIdeSnapshot={() => store.getSnapshot()}
+      openEditor={openEditor}
+      closeEditor={closeEditor}
       t={key => zh[key as IdeLocaleKey] ?? key}
-    />,
+    />
   )
-  return { view, store, listFiles, readFile, saveFile }
+  const view = render(surface())
+  return {
+    view,
+    store,
+    listFiles,
+    readFile,
+    saveFile,
+    openEditor,
+    closeEditor,
+    setCollapsed(next: boolean) {
+      collapsed = next
+      view.rerender(surface())
+    },
+    setExclusive(next: boolean) {
+      exclusive = next
+      view.rerender(surface())
+    },
+  }
 }
 
 async function openMarkdown(): Promise<HTMLTextAreaElement> {
@@ -249,14 +276,69 @@ describe('IDE surface', () => {
     expect(screen.queryByRole('textbox', { name: 'README.md' })).toBeNull()
   })
 
-  it('hides without removing the open tab or dirty buffer', async () => {
+  it('closes the layout column without removing the open tab or dirty buffer', async () => {
     const b = mount()
     const editor = await openMarkdown()
     fireEvent.change(editor, { target: { value: 'kept' } })
-    fireEvent.click(screen.getByRole('button', { name: '关闭编辑器' }))
-    expect(b.store.getSnapshot()).toMatchObject({ visible: false })
+    const surface = screen.getByRole('region', { name: '编辑器' })
+    const close = within(surface).getByRole('button', { name: '关闭编辑器' })
+    fireEvent.click(close)
+    expect(b.closeEditor).toHaveBeenCalledOnce()
     expect(b.store.getSnapshot().tabs[0]).toMatchObject({ content: 'kept', dirty: true })
+    b.setCollapsed(true)
+    expect(surface.hasAttribute('inert')).toBe(true)
     expect(b.view.container.querySelector('[aria-hidden="true"]')).toBeTruthy()
+  })
+
+  it('moves focus into the opened pane and returns it to the header action', async () => {
+    const opener = render(<button id="dsh-ide-toggle" type="button">编辑器</button>)
+      .getByRole('button', { name: '编辑器' })
+    opener.focus()
+    const b = mount({
+      collapsed: true,
+      initialize: (store) => { store.actions.dispatch({ type: 'request-workspace', workspaceId }) },
+    })
+    expect(document.activeElement).toBe(opener)
+
+    act(() => { b.setCollapsed(false) })
+    const close = await screen.findByRole('button', { name: '关闭编辑器' })
+    await waitFor(() => { expect(document.activeElement).toBe(close) })
+    fireEvent.click(close)
+    act(() => { b.setCollapsed(true) })
+    await waitFor(() => { expect(document.activeElement).toBe(opener) })
+  })
+
+  it('moves focus from hidden conversation chrome but preserves sidebar focus', async () => {
+    const chrome = render(
+      <>
+        <div data-shell-panel="sidebar"><button type="button">Sidebar action</button></div>
+        <div data-shell-panel="conversation"><button type="button">Conversation action</button></div>
+      </>,
+    )
+    const conversationAction = chrome.getByRole('button', { name: 'Conversation action' })
+    const sidebarAction = chrome.getByRole('button', { name: 'Sidebar action' })
+    const b = mount()
+    conversationAction.focus()
+    expect(document.activeElement).toBe(conversationAction)
+
+    act(() => { b.setExclusive(true) })
+    const close = await screen.findByRole('button', { name: '关闭编辑器' })
+    await waitFor(() => { expect(document.activeElement).toBe(close) })
+
+    act(() => { b.setExclusive(false) })
+    sidebarAction.focus()
+    act(() => { b.setExclusive(true) })
+    expect(document.activeElement).toBe(sidebarAction)
+
+    act(() => { b.setExclusive(false) })
+    const separator = document.createElement('div')
+    separator.tabIndex = 0
+    document.body.append(separator)
+    separator.focus()
+    separator.remove()
+    expect(document.activeElement).toBe(document.body)
+    act(() => { b.setExclusive(true) })
+    await waitFor(() => { expect(document.activeElement).toBe(close) })
   })
 
   it('settles desktop quit only after an explicit dirty-buffer decision', async () => {
@@ -346,14 +428,14 @@ describe('IDE surface', () => {
 
   it('selects the first workspace and renders the empty inventory state', async () => {
     const automatic = mount({
-      initialize: (store) => { store.actions.dispatch({ type: 'set-visible', visible: true }) },
+      initialize: () => {},
     })
     await waitFor(() => { expect(automatic.store.getSnapshot().selectedWorkspaceId).toBe(workspaceId) })
     cleanup()
 
     const empty = mount({
       workspaces: [],
-      initialize: (store) => { store.actions.dispatch({ type: 'set-visible', visible: true }) },
+      initialize: () => {},
     })
     expect(screen.getByText('请先添加一个工作区，再从文件树打开文本文件。')).toBeTruthy()
     const select = screen.getByRole('combobox', { name: '工作区' }) as HTMLSelectElement

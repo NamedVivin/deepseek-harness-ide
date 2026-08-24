@@ -1,60 +1,143 @@
 /**
- * Three-column shell frame, registered into the built-in 'root' slot (the web
+ * Four-column shell frame, registered into the built-in 'root' slot (the web
  * shell renders only 'root'). Owns the grid tracks (sidebar | center |
- * details), the drag handles (pointer capture + rAF throttle), the concession
- * chain (columns.ts), and the child-slot render decisions: the sidebar slot
- * renders HERE with live parameters from the concession solve, and the
- * session-aware occupants render in fixed column positions; strict entries
- * gate themselves on current-session availability while session-maybe
- * entries retain identity. Pure component: everything arrives
- * through the three framework shares — zero cordis or framework imports,
- * zero self-made hooks.
+ * details | editor), drag handles, concession chain, and child-slot render
+ * decisions. Session-aware occupants stay at fixed tree positions; strict
+ * entries gate themselves on current-session availability while root and
+ * session-maybe entries retain identity.
  */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { PropsRenderSlots, PropsRuntime, PropsStore } from '@deepseek-ai/dsh-client-ui-slots'
-import { computeColumns, SIDEBAR_AUTO_COLLAPSE, SIDEBAR_DEFAULT } from './columns.ts'
+import {
+  CENTER_EDITOR_HARD_MIN,
+  computeColumns,
+  EDITOR_EXCLUSIVE_MAX,
+  EDITOR_MAX,
+  EDITOR_MIN,
+  SIDEBAR_AUTO_COLLAPSE,
+  SIDEBAR_COLLAPSED,
+  SIDEBAR_DEFAULT,
+} from './columns.ts'
 import type { createLayoutStore } from './stores.ts'
 import css from './AppFrame.module.css'
 
 /** Full composed props: runtime share + child-slot render share + store share. */
 export type AppFrameProps =
   & PropsRuntime<'root'>
-  & PropsRenderSlots<'sidebar' | 'conversation' | 'details' | 'shell.overlay'>
+  & PropsRenderSlots<'sidebar' | 'conversation' | 'details' | 'shell.editor' | 'shell.overlay'>
   & PropsStore<ReturnType<typeof createLayoutStore>>
 
-/** Center column grid item (session-body building block). */
-function CenterColumn(props: { children?: ReactNode }) {
-  return <div className={css.centerCol}>{props.children}</div>
+/** Keep a mounted zero-width column outside focus and accessibility traversal. */
+function useInertRef(inert: boolean) {
+  return useCallback((node: HTMLDivElement | null): void => {
+    node?.toggleAttribute('inert', inert)
+  }, [inert])
 }
 
-/** Details column grid item; width 0 keeps the subtree mounted (never unmount on close). */
-function DetailsColumn(props: { children?: ReactNode }) {
-  return <div className={css.detailsCol}>{props.children}</div>
+/** Center column grid item (session-body building block). */
+function CenterColumn(props: { hidden: boolean; children?: ReactNode }) {
+  return (
+    <div
+      ref={useInertRef(props.hidden)}
+      className={css.centerCol}
+      data-shell-panel="conversation"
+      aria-hidden={props.hidden || undefined}
+    >
+      {props.children}
+    </div>
+  )
 }
+
+/** Details column grid item; width 0 keeps the subtree mounted. */
+function DetailsColumn(props: { hidden: boolean; children?: ReactNode }) {
+  return (
+    <div
+      ref={useInertRef(props.hidden)}
+      className={css.detailsCol}
+      data-shell-panel="details"
+      aria-hidden={props.hidden || undefined}
+    >
+      {props.children}
+    </div>
+  )
+}
+
+/** Root-scoped editor column; width 0 preserves the occupant's local state. */
+function EditorColumn(props: { hidden: boolean; children?: ReactNode }) {
+  return (
+    <div
+      ref={useInertRef(props.hidden)}
+      className={css.editorCol}
+      data-shell-panel="editor"
+      aria-hidden={props.hidden || undefined}
+    >
+      {props.children}
+    </div>
+  )
+}
+
+const KEYBOARD_RESIZE_STEP = 16
 
 /**
  * One drag handle: pointer capture, rAF-throttled dx reports against the drag-start origin.
  * `side` keys the hover-reveal CSS to the owning column.
  */
-function DragHandle(props: { side: 'sidebar' | 'details'; left: number; onStart: () => void; onDrag: (dx: number) => void; onEnd: () => void }) {
+function DragHandle(props: {
+  side: 'sidebar' | 'details' | 'editor'
+  left: number
+  onStart: () => void
+  onDrag: (dx: number) => void
+  onEnd: () => void
+  onSet?: (px: number) => void
+  value?: number
+  min?: number
+  max?: number
+  labelledBy?: string
+  controls?: string
+}) {
   const [dragging, setDragging] = useState(false)
   const origin = useRef(0)
   const latest = useRef(0)
   const frame = useRef<number | null>(null)
-  const callbacks = useRef({ onStart: props.onStart, onDrag: props.onDrag, onEnd: props.onEnd })
-  callbacks.current = { onStart: props.onStart, onDrag: props.onDrag, onEnd: props.onEnd }
+  const activePointer = useRef<number | null>(null)
+  const callbacks = useRef({
+    onStart: props.onStart,
+    onDrag: props.onDrag,
+    onEnd: props.onEnd,
+    onSet: props.onSet,
+  })
+  callbacks.current = {
+    onStart: props.onStart,
+    onDrag: props.onDrag,
+    onEnd: props.onEnd,
+    onSet: props.onSet,
+  }
+
+  const finishPointer = useCallback((pointerId: number, commit: boolean): void => {
+    if (activePointer.current !== pointerId) return
+    if (frame.current !== null) {
+      cancelAnimationFrame(frame.current)
+      frame.current = null
+    }
+    if (commit) callbacks.current.onDrag(latest.current - origin.current)
+    activePointer.current = null
+    setDragging(false)
+    callbacks.current.onEnd()
+  }, [])
 
   const onPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0 || !e.isPrimary || activePointer.current !== null) return
     e.preventDefault()
-    e.currentTarget.setPointerCapture(e.pointerId)
     origin.current = e.clientX
     latest.current = e.clientX
+    activePointer.current = e.pointerId
+    e.currentTarget.setPointerCapture(e.pointerId)
     callbacks.current.onStart()
     setDragging(true)
   }, [])
   const onPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    if (!e.currentTarget.hasPointerCapture(e.pointerId)) return
+    if (activePointer.current !== e.pointerId || !e.currentTarget.hasPointerCapture(e.pointerId)) return
     latest.current = e.clientX
     frame.current ??= requestAnimationFrame(() => {
       frame.current = null
@@ -62,28 +145,69 @@ function DragHandle(props: { side: 'sidebar' | 'details'; left: number; onStart:
     })
   }, [])
   const onPointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    if (!e.currentTarget.hasPointerCapture(e.pointerId)) return
-    e.currentTarget.releasePointerCapture(e.pointerId)
-    if (frame.current !== null) { cancelAnimationFrame(frame.current); frame.current = null }
-    callbacks.current.onDrag(latest.current - origin.current)
-    setDragging(false)
-    callbacks.current.onEnd()
+    if (activePointer.current !== e.pointerId) return
+    latest.current = e.clientX
+    const captured = e.currentTarget.hasPointerCapture(e.pointerId)
+    finishPointer(e.pointerId, true)
+    if (captured) e.currentTarget.releasePointerCapture(e.pointerId)
+  }, [finishPointer])
+  const onPointerCancel = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (activePointer.current !== e.pointerId) return
+    const captured = e.currentTarget.hasPointerCapture(e.pointerId)
+    finishPointer(e.pointerId, false)
+    if (captured) e.currentTarget.releasePointerCapture(e.pointerId)
+  }, [finishPointer])
+  const onLostPointerCapture = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    finishPointer(e.pointerId, false)
+  }, [finishPointer])
+  const onKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
+    const set = callbacks.current.onSet
+    if (set === undefined || props.value === undefined || props.min === undefined || props.max === undefined) return
+    let next: number | undefined
+    if (e.key === 'ArrowLeft') next = Math.min(props.max, props.value + KEYBOARD_RESIZE_STEP)
+    else if (e.key === 'ArrowRight') next = Math.max(props.min, props.value - KEYBOARD_RESIZE_STEP)
+    else if (e.key === 'Home') next = props.min
+    else if (e.key === 'End') next = props.max
+    if (next === undefined) return
+    e.preventDefault()
+    set(next)
+  }, [props.max, props.min, props.value])
+
+  useEffect(() => () => {
+    if (frame.current !== null) cancelAnimationFrame(frame.current)
+    if (activePointer.current !== null) callbacks.current.onEnd()
+    activePointer.current = null
+    frame.current = null
   }, [])
+
+  const editor = props.side === 'editor'
 
   return (
     <div
       className={css.handle}
       style={{ left: props.left }}
       data-side={props.side}
+      data-resize-handle={props.side}
       data-dragging={dragging || undefined}
+      role={editor ? 'separator' : undefined}
+      tabIndex={editor ? 0 : undefined}
+      aria-orientation={editor ? 'vertical' : undefined}
+      aria-labelledby={editor ? props.labelledBy : undefined}
+      aria-controls={editor ? props.controls : undefined}
+      aria-valuemin={editor ? props.min : undefined}
+      aria-valuemax={editor ? props.max : undefined}
+      aria-valuenow={editor ? props.value : undefined}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
+      onPointerCancel={onPointerCancel}
+      onLostPointerCapture={onLostPointerCapture}
+      onKeyDown={onKeyDown}
     />
   )
 }
 
-/** The three-column frame (see module doc). */
+/** The four-column frame (see module doc). */
 export function AppFrame({
   useStore,
   useSessions,
@@ -135,42 +259,93 @@ export function AppFrame({
   // absorbs the squeeze.
   const narrow = viewport < SIDEBAR_AUTO_COLLAPSE
   useEffect(() => { actions.setNarrow(narrow) }, [actions, narrow])
-  const sidebarCollapsed = narrow ? !panels.narrowExpanded : panels.sidebar === 0
+  const navigationSidebarCollapsed = narrow ? !panels.narrowExpanded : panels.sidebar === 0
+  const editorSplitFloor = CENTER_EDITOR_HARD_MIN + EDITOR_MIN
+  const expandedSidebarPreference = panels.sidebar === 0 ? SIDEBAR_DEFAULT : panels.sidebar
+  const editorNeedsRail = panels.editor > 0
+    && viewport - expandedSidebarPreference <= editorSplitFloor
+    && viewport - SIDEBAR_COLLAPSED > editorSplitFloor
+  const editorCannotSplit = viewport - SIDEBAR_COLLAPSED <= editorSplitFloor
+  const editorBaseExclusive = panels.editor > 0
+    && (viewport <= EDITOR_EXCLUSIVE_MAX || editorCannotSplit)
+  const editorForcesRail = editorNeedsRail || editorBaseExclusive
+  useEffect(() => { actions.setEditorRailForced(editorForcesRail) }, [actions, editorForcesRail])
+  const editorForcedFull = editorForcesRail && panels.editorRailExpanded
+  const editorExclusive = editorBaseExclusive || editorForcedFull
+  const sidebarCollapsed = editorForcedFull
+    ? false
+    : editorExclusive || editorNeedsRail || navigationSidebarCollapsed
   const sidebarPreference = sidebarCollapsed
     ? 0
     : panels.sidebar === 0 ? SIDEBAR_DEFAULT : panels.sidebar
-  const cols = computeColumns(viewport, sidebarPreference, detailsSession === undefined ? 0 : panels.details)
+  const exclusiveSidebar = editorForcedFull ? expandedSidebarPreference : SIDEBAR_COLLAPSED
+  const detailsPreference = detailsSession === undefined ? 0 : panels.details
+  const cols = editorExclusive
+    ? {
+      sidebar: exclusiveSidebar,
+      center: 0,
+      details: 0,
+      editor: Math.max(0, viewport - exclusiveSidebar),
+    }
+    : computeColumns(
+      viewport,
+      sidebarPreference,
+      detailsPreference,
+      panels.editor,
+    )
   const colsRef = useRef(cols)
   colsRef.current = cols
+  // Reuse the concession solver for the separator's reachable ceiling. This
+  // accounts for an open details track and for the switch from the normal
+  // conversation floor to its smaller editor-resize floor.
+  const editorMax = computeColumns(
+    viewport,
+    sidebarPreference,
+    detailsPreference,
+    EDITOR_MAX,
+  ).editor
+  const editorMaxRef = useRef(editorMax)
+  editorMaxRef.current = editorMax
 
   // The drag base is the rendered width captured at drag start (grabbing a
   // concession-clamped panel must not jump back to the stored preference);
   // it stays frozen for the whole gesture so dx deltas do not compound.
   const sidebarBase = useRef(0)
   const detailsBase = useRef(0)
+  const editorBase = useRef(0)
   // Track-level transitions pause for the whole gesture: eased tracks would
   // detach the column edge from the pointer (AppFrame.module.css).
   const [dragging, setDragging] = useState(false)
   const onDragEnd = useCallback(() => { setDragging(false) }, [])
   const onSidebarStart = useCallback(() => { sidebarBase.current = colsRef.current.sidebar; setDragging(true) }, [])
   const onDetailsStart = useCallback(() => { detailsBase.current = colsRef.current.details; setDragging(true) }, [])
+  const onEditorStart = useCallback(() => { editorBase.current = colsRef.current.editor; setDragging(true) }, [])
   const onSidebarDrag = useCallback((dx: number) => {
     actions.setSidebar(sidebarBase.current + dx)
   }, [actions])
   const onDetailsDrag = useCallback((dx: number) => {
     actions.setDetails(detailsBase.current - dx)
   }, [actions])
+  const onEditorDrag = useCallback((dx: number) => {
+    actions.setEditor(Math.min(editorMaxRef.current, Math.max(EDITOR_MIN, editorBase.current - dx)))
+  }, [actions])
+  const onEditorSet = useCallback((px: number) => {
+    actions.setEditor(Math.min(editorMaxRef.current, Math.max(EDITOR_MIN, px)))
+  }, [actions])
 
   return (
     <div
       ref={frameRef}
       className={css.frame}
-      style={{ gridTemplateColumns: `${cols.sidebar}px minmax(0, 1fr) ${cols.details}px` }}
+      style={{ gridTemplateColumns: `${cols.sidebar}px minmax(0, 1fr) ${cols.details}px ${cols.editor}px` }}
+      data-shell-frame=""
       data-sidebar-collapsed={sidebarCollapsed || undefined}
       data-details-collapsed={cols.details === 0 || undefined}
+      data-editor-collapsed={cols.editor === 0 || undefined}
+      data-editor-exclusive={editorExclusive || undefined}
       data-dragging={dragging || undefined}
     >
-      <div className={css.sidebarCol}>
+      <div className={css.sidebarCol} data-shell-panel="sidebar">
         {/* Render-site slot call with live concession output: a closed
             sidebar keeps the mounted slot at the compact-rail width, and the
             component sees its rendered state as owner params decided here
@@ -187,15 +362,37 @@ export function AppFrame({
             the shell's own pending rendering. The conversation
             is session-maybe; the strict details entry naturally renders
             empty while no session is current. */}
-        <CenterColumn>{renderSlot('conversation', {})}</CenterColumn>
-        <DetailsColumn>{renderSlot('details', {})}</DetailsColumn>
+        <CenterColumn hidden={editorExclusive}>{renderSlot('conversation', {})}</CenterColumn>
+        <DetailsColumn hidden={cols.details === 0}>{renderSlot('details', {})}</DetailsColumn>
+        {cols.editor > 0 && !editorExclusive && (
+          <DragHandle
+            side="editor"
+            left={cols.sidebar + cols.center + cols.details}
+            onStart={onEditorStart}
+            onDrag={onEditorDrag}
+            onEnd={onDragEnd}
+            onSet={onEditorSet}
+            value={cols.editor}
+            min={EDITOR_MIN}
+            max={editorMax}
+            labelledBy="dsh-ide-title"
+            controls="dsh-ide-surface"
+          />
+        )}
+        <EditorColumn hidden={cols.editor === 0}>
+          {renderSlot('shell.editor', {
+            collapsed: cols.editor === 0,
+            exclusive: editorExclusive,
+            width: cols.editor,
+          })}
+        </EditorColumn>
       </>
       <div className={css.overlayLayer} data-shell-overlay>
         {renderSlot('shell.overlay', {})}
       </div>
       {/* The collapsed rail is fixed-width: no resize handle while closed. */}
       {!sidebarCollapsed && <DragHandle side="sidebar" left={cols.sidebar} onStart={onSidebarStart} onDrag={onSidebarDrag} onEnd={onDragEnd} />}
-      {cols.details > 0 && <DragHandle side="details" left={viewport - cols.details} onStart={onDetailsStart} onDrag={onDetailsDrag} onEnd={onDragEnd} />}
+      {cols.details > 0 && <DragHandle side="details" left={cols.sidebar + cols.center} onStart={onDetailsStart} onDrag={onDetailsDrag} onEnd={onDragEnd} />}
     </div>
   )
 }

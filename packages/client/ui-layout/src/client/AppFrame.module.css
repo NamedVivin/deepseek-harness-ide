@@ -42,9 +42,19 @@
   border-left: 1px solid var(--dsw-alias-border-l2);
 }
 
+.editorCol {
+  min-width: 0;
+  overflow: hidden;
+  border-left: 1px solid var(--dsw-alias-border-l2);
+}
+
 /* The details subtree stays mounted at zero width, so its border must not paint
    a 1px seam. The collapsed sidebar instead retains a bordered compact rail. */
 .frame[data-details-collapsed] .detailsCol {
+  border-left: none;
+}
+
+.frame[data-editor-collapsed] .editorCol {
   border-left: none;
 }
 
@@ -95,10 +105,32 @@
     background var(--ds-transition-duration-slow) var(--ds-ease-in-out);
 }
 
+.handle[data-side='editor']::after {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 50%;
+  width: 2px;
+  transform: translateX(-50%);
+  background: var(--dsw-alias-brand-primary);
+  opacity: 0;
+  transition: opacity var(--ds-transition-duration-slow) var(--ds-ease-in-out);
+}
+
 .detailsCol:hover ~ .handle[data-side='details']::after,
 .handle[data-side='details']:hover::after,
 .handle[data-side='details'][data-dragging='true']::after {
   opacity: 1;
+}
+
+.handle[data-side='editor']:hover::after,
+.handle[data-side='editor']:focus-visible::after,
+.handle[data-side='editor'][data-dragging='true']::after {
+  opacity: 1;
+}
+
+.handle[data-side='editor']:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: -2px;
 }
 
 .handle[data-side='details']:hover::after,

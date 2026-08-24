@@ -167,6 +167,7 @@ export function ConversationRoot({
   )
 
   const phase = settling ? 'settling' : hero ? 'hero' : 'active'
+  const rootUtilities = renderSlot('conversation.header.utilities', {})
   const composer = renderSlotChain(
     'conversation.composer',
     { interactions: pending, session },
@@ -185,7 +186,14 @@ export function ConversationRoot({
 
   return (
     <div className={css.root} data-phase={phase}>
-      {renderSlot('conversation.session.header', {})}
+      {phase !== 'active' && (
+        <div className={css.rootHeaderUtilities} data-conversation-root-utilities="">
+          {rootUtilities}
+        </div>
+      )}
+      {renderSlot('conversation.session.header', {
+        rootUtilities: phase === 'active' ? rootUtilities : null,
+      })}
       <div className={css.scrollBody} data-conversation-scroll="">
         {renderSlot('conversation.session', {})}
         {composerSeat}

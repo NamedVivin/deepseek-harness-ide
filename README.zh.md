@@ -10,6 +10,19 @@ DeepSeek Harness（`dsh`）是由 [DeepSeek AI](https://deepseek.com) 开发的�
 
 DeepSeek Harness 目前处于 _开发者预览_ 阶段，正在快速迭代。**未来将出现破坏兼容性的变更。**
 
+## 集成 IDE
+
+`ide` profile 在 agent 会话旁提供 Workspace 文件树和 CodeMirror 编辑器。它可以把 Agent 产出的受支持文件位置打开到已校验行，使用常见语言的语法高亮编辑已有普通 UTF-8 文件，从当前未保存 buffer 预览 Markdown，并通过版本校验保存，在发生冲突后同时保留本地 buffer 与最新磁盘内容。宽屏显示带可拖动分隔条的会话与编辑器并排面板；窄屏由编辑器占用内容区。详见 [IDE 行为与限制](packages/client/ui-ide/README.zh.md)。
+
+从源码 checkout 使用时，请先构建一次，再启动 IDE：
+
+```sh
+pnpm run build
+pnpm dsh --profile ide
+```
+
+Electron 安装应用内置 Node.js 运行时且不监听 TCP。签名安装包尚未公开发布；本地未签名安装包仅用于开发。详见[桌面应用文档](apps/desktop/README.zh.md)。
+
 <a id="run"></a>
 
 ## 运行

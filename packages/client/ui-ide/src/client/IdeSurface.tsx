@@ -1,4 +1,4 @@
-/** Full-frame workspace editor surface mounted in `shell.overlay`. */
+/** Workspace editor pane mounted in the layout-owned `shell.editor` column. */
 
 import type {
   WorkspaceFileSegments,
@@ -46,11 +46,19 @@ export interface IdeFilesInjected {
   readonly getIdeSnapshot: () => IdeState
 }
 
-/** Props composed from the overlay owner, shared IDE store, Remote callbacks, and dictionary. */
+/** Pane callbacks and file operations delivered by the slot inject factory. */
+export interface IdeSurfaceInjected extends IdeFilesInjected {
+  /** Open the layout-owned editor column. */
+  readonly openEditor: () => void
+  /** Close the layout-owned editor column without discarding IDE state. */
+  readonly closeEditor: () => void
+}
+
+/** Props composed from the editor owner, IDE store, injected callbacks, and dictionary. */
 export type IdeSurfaceProps =
-  PropsRuntime<'shell.overlay'>
+  PropsRuntime<'shell.editor'>
   & PropsStore<ReturnType<typeof createIdeStore>>
-  & IdeFilesInjected
+  & IdeSurfaceInjected
   & PropsLocale<'ide'>
 
 function failureKey(failure: WorkspaceFilesFailure): IdeLocaleKey {
@@ -67,6 +75,8 @@ function tabElementId(kind: 'tab' | 'panel', id: string): string {
 
 /** Render the editor, file tree, save recovery, and unsaved-buffer prompts. */
 export function IdeSurface({
+  collapsed,
+  exclusive,
   useWorkspaces,
   useStore,
   actions,
@@ -74,9 +84,10 @@ export function IdeSurface({
   readFile,
   saveFile,
   getIdeSnapshot,
+  openEditor,
+  closeEditor,
   t,
 }: IdeSurfaceProps) {
-  const visible = useStore(state => state.visible)
   const selectedWorkspaceId = useStore(state => state.selectedWorkspaceId)
   const tabs = useStore(state => state.tabs)
   const activeTabId = useStore(state => state.activeTabId)
@@ -92,6 +103,9 @@ export function IdeSurface({
   }>()
   const reads = useRef(new Map<string, { controller: AbortController; tab: IdeTab }>())
   const tabButtons = useRef(new Map<string, HTMLButtonElement>())
+  const closeButton = useRef<HTMLButtonElement>(null)
+  const previousCollapsed = useRef(collapsed)
+  const previousExclusive = useRef(exclusive)
   const activeTab = tabs.find(tab => tab.id === activeTabId)
   const closeTab = tabs.find(tab => tab.id === pendingCloseTabId)
 
@@ -244,11 +258,11 @@ export function IdeSurface({
           settle: (ready) => { resolve({ ready }) },
           removeAbort: () => { signal.removeEventListener('abort', onAbort) },
         }
-        actions.dispatch({ type: 'set-visible', visible: true })
+        openEditor()
         setQuitPrompt(true)
       })
     })
-  }, [actions, getIdeSnapshot, settleQuit])
+  }, [getIdeSnapshot, openEditor, settleQuit])
 
   useEffect(() => {
     const onBeforeUnload = (event: BeforeUnloadEvent): void => {
@@ -261,7 +275,7 @@ export function IdeSurface({
   useEffect(() => () => { settleQuit(false) }, [settleQuit])
 
   useEffect(() => {
-    if (!visible) return
+    if (collapsed) return
     const onKeyDown = (event: KeyboardEvent): void => {
       if (!(event.metaKey || event.ctrlKey) || event.altKey) return
       const key = event.key.toLowerCase()
@@ -275,7 +289,7 @@ export function IdeSurface({
     }
     window.addEventListener('keydown', onKeyDown)
     return () => { window.removeEventListener('keydown', onKeyDown) }
-  }, [actions, activeTab, saveTab, visible])
+  }, [actions, activeTab, collapsed, saveTab])
 
   const workspaceOptions = useMemo(
     () => workspaces.map(workspace => ({ id: workspace.workspaceId, title: workspace.title })),
@@ -295,14 +309,41 @@ export function IdeSurface({
     tabButtons.current.get(target.id)?.focus()
   }
 
+  const setSurfaceRef = useCallback((node: HTMLElement | null): void => {
+    if (node !== null) node.toggleAttribute('inert', collapsed)
+  }, [collapsed])
+
+  useEffect(() => {
+    const wasCollapsed = previousCollapsed.current
+    const wasExclusive = previousExclusive.current
+    previousCollapsed.current = collapsed
+    previousExclusive.current = exclusive
+    if (!wasCollapsed && collapsed) {
+      document.getElementById('dsh-ide-toggle')?.focus()
+      return
+    }
+    const enteredExclusive = !wasExclusive && exclusive
+    const activeInHiddenPanel = document.activeElement instanceof Element
+      && document.activeElement.closest(
+        '[data-shell-panel="conversation"], [data-shell-panel="details"]',
+      ) !== null
+    const focusLeftDocumentTree = document.activeElement === document.body
+    if ((wasCollapsed && !collapsed)
+      || (enteredExclusive && (activeInHiddenPanel || focusLeftDocumentTree))) {
+      closeButton.current?.focus()
+    }
+  }, [collapsed, exclusive])
+
   return (
     <section
-      className={clsx(css.surface, !visible && css.hidden)}
+      ref={setSurfaceRef}
+      id="dsh-ide-surface"
+      className={clsx(css.surface, collapsed && css.hidden)}
       aria-label={t('action.open')}
-      aria-hidden={!visible}
+      aria-hidden={collapsed}
     >
       <header className={css.header}>
-        <div className={css.brand}><IconCodeOutline16 /><strong>{t('action.open')}</strong></div>
+        <div className={css.brand}><IconCodeOutline16 /><strong id="dsh-ide-title">{t('action.open')}</strong></div>
         <label className={css.workspaceLabel}>
           <span>{t('workspace.label')}</span>
           <select
@@ -319,10 +360,11 @@ export function IdeSurface({
           </select>
         </label>
         <button
+          ref={closeButton}
           type="button"
           className={css.iconButton}
           aria-label={t('action.close')}
-          onClick={() => { actions.dispatch({ type: 'set-visible', visible: false }) }}
+          onClick={closeEditor}
         >
           <IconCloseOutline16 />
         </button>

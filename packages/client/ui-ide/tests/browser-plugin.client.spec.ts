@@ -24,8 +24,8 @@ async function bench() {
   ctx.slots.register({
     name: 'root',
     children: {
-      'shell.overlay': { kind: 'list', scope: 'root' },
-      'sidebar.footer.action': { kind: 'list', scope: 'root' },
+      'shell.editor': { kind: 'single', scope: 'root' },
+      'conversation.header.utilities': { kind: 'list', scope: 'root' },
     },
   } as never, (() => null) as never)
   ctx.provide('locale', new LocaleRuntime(ctx))
@@ -60,6 +60,30 @@ async function bench() {
     }
   }
   new RemoteService(ctx)
+  let editorOpenValue = false
+  const editorOpenListeners = new Set<() => void>()
+  const openEditor = vi.fn(() => {
+    editorOpenValue = true
+    for (const listener of editorOpenListeners) listener()
+  })
+  const closeEditor = vi.fn(() => {
+    editorOpenValue = false
+    for (const listener of editorOpenListeners) listener()
+  })
+  ctx.provide('layout', {
+    editorOpen: {
+      getSnapshot: () => editorOpenValue,
+      subscribe: (listener: () => void) => {
+        editorOpenListeners.add(listener)
+        return () => { editorOpenListeners.delete(listener) }
+      },
+    },
+    toggleSidebar: vi.fn(),
+    openDetails: vi.fn(),
+    closeDetails: vi.fn(),
+    openEditor,
+    closeEditor,
+  } as never)
   ctx.provide('remote.workspaceFiles', { list, read, save, resolveLocation } as never)
   ctx.provide('workspaces', {
     list: {
@@ -104,33 +128,34 @@ async function bench() {
   }
   const fileOpener = new TestFileOpener(ctx)
   const fiber = ctx.plugin({ inject: [...inject], apply })
-  return { ctx, fiber, list, read, save, resolveLocation, fileOpener }
+  return { ctx, fiber, list, read, save, resolveLocation, fileOpener, openEditor, closeEditor }
 }
 
 describe('ui-ide Client plugin', () => {
-  it('declares only the services its two registrations use', () => {
+  it('declares only the services its root registrations use', () => {
     expect(inject).toEqual([
       'slots', 'remote', 'remote.workspaceFiles', 'locale', 'workspaces', 'fileOpener',
+      'layout',
     ])
   })
 
-  it('registers the overlay and footer action with one shared root store handle', async () => {
+  it('registers a store-backed editor pane and a layout-backed header action', async () => {
     const b = await bench()
     await b.fiber.await()
-    const overlay = b.ctx.slots.entries('shell.overlay')[0]
-    const action = b.ctx.slots.entries('sidebar.footer.action')[0]
-    expect(overlay?.options).toMatchObject({ id: 'ide', order: 10 })
+    const editor = b.ctx.slots.entries('shell.editor')[0]
+    const action = b.ctx.slots.entries('conversation.header.utilities')[0]
+    expect(editor).toBeDefined()
     expect(action?.options).toMatchObject({ id: 'ide', order: 10 })
-    expect(overlay?.locale).toBe('ide')
+    expect(editor?.locale).toBe('ide')
     expect(action?.locale).toBe('ide')
-    expect(overlay?.store).toBeDefined()
-    expect(action?.store).toBe(overlay?.store)
+    expect(editor?.store).toBeDefined()
+    expect(action?.store).toBeUndefined()
   })
 
   it('unwraps transport results but preserves workspace-file business results', async () => {
     const b = await bench()
     await b.fiber.await()
-    const entry = b.ctx.slots.entries('shell.overlay')[0]!
+    const entry = b.ctx.slots.entries('shell.editor')[0]!
     const files = (entry.inject as unknown as () => IdeFilesInjected)()
     await expect(files.listFiles({ workspaceId, directory: [] })).resolves.toEqual({
       ok: true, value: { directory: [], entries: [] },
@@ -164,7 +189,7 @@ describe('ui-ide Client plugin', () => {
       error: { code: 'transport', message: 'save offline', details: {} },
     } as never)
     await b.fiber.await()
-    const files = (b.ctx.slots.entries('shell.overlay')[0]!.inject as unknown as () => IdeFilesInjected)()
+    const files = (b.ctx.slots.entries('shell.editor')[0]!.inject as unknown as () => IdeFilesInjected)()
     await expect(files.listFiles({ workspaceId, directory: [] })).rejects.toThrow(
       'workspaceFiles.list failed: transport: list offline',
     )
@@ -194,18 +219,18 @@ describe('ui-ide Client plugin', () => {
   it('routes a complete session location through Host resolution and reuses its tab', async () => {
     const b = await bench()
     await b.fiber.await()
-    const entry = b.ctx.slots.entries('shell.overlay')[0]!
+    const entry = b.ctx.slots.entries('shell.editor')[0]!
     const location = { path: '/host/private/workspace/a.ts', line: 17 }
 
     await expect(b.fileOpener.tryOpen({ sessionId, location })).resolves.toBe('handled')
     expect(b.resolveLocation).toHaveBeenCalledWith({ workspaceId, location })
     const store = (entry.store as ReturnType<typeof createIdeStore>).create()
     expect(store.getSnapshot()).toMatchObject({
-      visible: true,
       selectedWorkspaceId: workspaceId,
       activeTabId: JSON.stringify([workspaceId, 'a.ts']),
       tabs: [{ segments: ['a.ts'], focusLine: 17, focusRevision: 1 }],
     })
+    expect(b.openEditor).toHaveBeenCalledOnce()
 
     await expect(b.fileOpener.tryOpen({ sessionId, location })).resolves.toBe('handled')
     expect(store.getSnapshot().tabs).toHaveLength(1)
@@ -250,12 +275,13 @@ describe('ui-ide Client plugin', () => {
     })).resolves.toBe('unhandled')
   })
 
-  it('removes both entries and their shared store seat on plugin unload', async () => {
+  it('removes both root entries and closes the layout column on plugin unload', async () => {
     const b = await bench()
     await b.fiber.await()
     await b.fiber.dispose()
-    expect(b.ctx.slots.entries('shell.overlay')).toHaveLength(0)
-    expect(b.ctx.slots.entries('sidebar.footer.action')).toHaveLength(0)
+    expect(b.ctx.slots.entries('shell.editor')).toHaveLength(0)
+    expect(b.ctx.slots.entries('conversation.header.utilities')).toHaveLength(0)
+    expect(b.closeEditor).toHaveBeenCalledOnce()
   })
 
   it('keeps an inert node-half loader seat', () => {

@@ -61,6 +61,14 @@ export type RenderMessageImages = (owner: Omit<MessageImagesOwnerProps, 'loadIma
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface SlotMap {
     /**
+     * Root-scoped utilities for the conversation column's upper-right edge.
+     * ConversationRoot dispatches the list once: it renders the result itself
+     * during Hero and settling phases, then hands the same result to the active
+     * Session header after that header's session-scoped utilities.
+     * Entries receive only the global standard kit.
+     */
+    'conversation.header.utilities': { kind: 'list'; scope: 'root' }
+    /**
      * The entire body of one session: taking this seat means rendering that
      * session's conversation yourself. The occupant also owns the per-session
      * draft mirror and the active view ring, so a replacement inherits both
@@ -75,9 +83,15 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
      * action row. Taking this seat means rendering all three yourself, and it
      * also collapses `conversation.session.header.actions` — that additive
      * seat is declared by whoever occupies this one, so replacing the header
-     * takes every action entry down with it.
+     * takes every action entry down with it. The resident root supplies the
+     * already-dispatched root utilities; a replacement keeps them reachable
+     * after its session-scoped utilities.
      */
-    'conversation.session.header': { kind: 'single'; scope: 'session' }
+    'conversation.session.header': {
+      kind: 'single'
+      scope: 'session'
+      owner: ConversationSessionHeaderOwnerProps
+    }
     /**
      * One breadcrumb title and its lineage controls. The render site keeps
      * the ordinary title as fallback; an occupant receives plain title data
@@ -311,6 +325,12 @@ export interface ConversationSessionOwnerProps {
    * @returns the scrollport containing `view` and the sticky composer seat.
    */
   wrapActiveBody?: (view: ReactNode) => ReactNode
+}
+
+/** Owner share that carries the root utility list into the strict Session header. */
+export interface ConversationSessionHeaderOwnerProps {
+  /** Root-scoped utilities, already dispatched once by ConversationRoot. */
+  rootUtilities: ReactNode
 }
 
 /** Header actions derive their state from the standard session/global kit. */
@@ -640,6 +660,7 @@ export interface HeroBrandMarkOwnerProps {
  */
 export type ConversationSlotProps =
   PropsRuntime<'conversation'> & PropsRenderSlots<
+    | 'conversation.header.utilities'
     | 'conversation.session' | 'conversation.session.header'
     | 'conversation.composer' | 'conversation.composer.bar'
     | 'conversation.input.overlay'

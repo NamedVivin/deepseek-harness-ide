@@ -9,6 +9,7 @@
  * declared action set, delivered as the registration's bound actions.
  */
 import type { BoundActions } from '@deepseek-ai/dsh-client-ui-slots'
+import type { ObservableSnapshot } from '@deepseek-ai/dsh-client-runtime/client'
 import type { createLayoutStore } from './stores.ts'
 
 /** The layout store's bound action set (framework-baked, draft params peeled). */
@@ -21,17 +22,28 @@ export type PanelActions = BoundActions<ReturnType<typeof createLayoutStore>>
  * only).
  */
 export interface ILayout {
+  /** Observable root preference; true while the editor panel is requested open. */
+  readonly editorOpen: ObservableSnapshot<boolean>
   /** Toggle the sidebar panel (closed ⟷ contract default width). */
   toggleSidebar(): void
   /** Open the details panel (no-op when already open). */
   openDetails(): void
   /** Close the details panel. */
   closeDetails(): void
+  /** Open the editor panel (no-op when already open). */
+  openEditor(): void
+  /** Close the editor panel. */
+  closeEditor(): void
 }
 
 /** Cross-plugin panel-action face (ctx.layout). */
 export class LayoutController implements ILayout {
   #panels: PanelActions | undefined
+
+  /**
+   * @param editorOpen - projection of the root layout store's editor preference.
+   */
+  constructor(readonly editorOpen: ObservableSnapshot<boolean>) {}
 
   /**
    * Adopt the root entry's bound store actions. Called from the root
@@ -57,6 +69,16 @@ export class LayoutController implements ILayout {
   /** Close the details panel. */
   closeDetails(): void {
     this.#require().closeDetails()
+  }
+
+  /** Open the editor panel (no-op when already open). */
+  openEditor(): void {
+    this.#require().openEditor()
+  }
+
+  /** Close the editor panel. */
+  closeEditor(): void {
+    this.#require().closeEditor()
   }
 
   #require(): PanelActions {

@@ -45,9 +45,8 @@ export interface IdeTab {
   readonly focusRevision: number
 }
 
-/** Root-scoped editor state shared by the overlay and sidebar action registrations. */
+/** Root-scoped editor state shared by the docked surface and file opener. */
 export interface IdeState {
-  readonly visible: boolean
   readonly selectedWorkspaceId: WorkspaceId | undefined
   readonly tabs: readonly IdeTab[]
   readonly activeTabId: IdeTabId | undefined
@@ -64,8 +63,6 @@ export interface IdeState {
 
 /** Input vocabulary of the pure IDE reducer. */
 export type IdeAction =
-  | { readonly type: 'toggle-visible' }
-  | { readonly type: 'set-visible'; readonly visible: boolean }
   | { readonly type: 'request-workspace'; readonly workspaceId: WorkspaceId }
   | { readonly type: 'cancel-workspace' }
   | { readonly type: 'discard-workspace' }
@@ -105,7 +102,6 @@ export type IdeAction =
 
 /** Empty IDE state for one root store instance. */
 export const INITIAL_IDE_STATE: IdeState = Object.freeze({
-  visible: false,
   selectedWorkspaceId: undefined,
   tabs: Object.freeze([]),
   activeTabId: undefined,
@@ -170,7 +166,7 @@ function beginOpen(
 ): IdeState {
   const id = ideTabId(workspaceId, segments)
   if (state.tabs.some(tab => tab.id === id)) {
-    const active = { ...state, visible: true, activeTabId: id }
+    const active = { ...state, activeTabId: id }
     return line === undefined
       ? active
       : replaceTab(active, id, tab => ({
@@ -198,7 +194,7 @@ function beginOpen(
     focusLine: line,
     focusRevision: line === undefined ? 0 : 1,
   }
-  return { ...state, visible: true, tabs: [...state.tabs, tab], activeTabId: id }
+  return { ...state, tabs: [...state.tabs, tab], activeTabId: id }
 }
 
 function finishWorkspaceChange(state: IdeState, workspaceId: WorkspaceId): IdeState {
@@ -222,10 +218,6 @@ function assertNever(_action: never): never {
  */
 export function reduceIdeState(state: IdeState, action: IdeAction): IdeState {
   switch (action.type) {
-    case 'toggle-visible':
-      return { ...state, visible: !state.visible }
-    case 'set-visible':
-      return state.visible === action.visible ? state : { ...state, visible: action.visible }
     case 'request-workspace': {
       if (state.selectedWorkspaceId === action.workspaceId) return state
       if (state.tabs.some(tab => tab.dirty || tab.save !== undefined)) {
@@ -249,7 +241,6 @@ export function reduceIdeState(state: IdeState, action: IdeAction): IdeState {
         if (state.tabs.some(tab => tab.dirty || tab.save !== undefined)) {
           return {
             ...state,
-            visible: true,
             pendingWorkspaceId: action.workspaceId,
             pendingOpen: {
               workspaceId: action.workspaceId,

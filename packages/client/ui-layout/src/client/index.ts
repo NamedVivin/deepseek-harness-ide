@@ -1,7 +1,7 @@
 /**
  * Layout plugin, browser half: one register() call contributes AppFrame into
  * the runtime's built-in 'root' slot and, in the same breath, declares the
- * four child slots (declaration = exclusive render authority), seats the
+ * five child slots (declaration = exclusive render authority), seats the
  * layout store (panel geometry), and wires the panel-action service face.
  * ctx.layout is the cross-plugin panel-action contract; navigation state lives
  * with the runtime sessions service. A second effect seats the theme
@@ -11,7 +11,7 @@ import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-ui-theme/client'
 import type { PanelActions } from './service.ts'
 import { AppFrame } from './AppFrame.tsx'
-import { createLayoutStore } from './stores.ts'
+import { createLayoutStoreBridge } from './stores.ts'
 import { LayoutController } from './service.ts'
 import { ThemePresenter } from './theme-presenter.ts'
 
@@ -19,7 +19,7 @@ import { ThemePresenter } from './theme-presenter.ts'
 // keep a symbol exported; test-only/package-internal symbols live off /src).
 // ILayout: the ctx.layout face consumers and test fakes type against.
 // OwnerShare contracts below are the render-side halves registrants compose
-// against; the frame components and the store factory are package-internal.
+// against; the frame components and the store bridge are package-internal.
 export { LayoutController } from './service.ts'
 export type { ILayout } from './service.ts'
 
@@ -33,7 +33,7 @@ declare module '@deepseek-ai/cordis' {
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface SlotMap {
     // The 'root' entry itself is the runtime's built-in slot (declared
-    // there); these four are the frame's children, declared by the same
+    // there); these five are the frame's children, declared by the same
     // register() call that contributes AppFrame. Session owners never pass
     // sessionId: the framework injects it as a standard prop.
     /**
@@ -71,6 +71,16 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
      */
     'details': { kind: 'single'; scope: 'session'; owner: DetailsOwnerProps }
     /**
+     * The rightmost workspace editor column. OCCUPIED by ui-ide's editor
+     * surface, which remains mounted at zero width while closed so its tabs
+     * and unsaved buffers retain identity. The root-scoped occupant remains
+     * available before any Session exists.
+     *
+     * The owner supplies rendered geometry after responsive and concession
+     * decisions; `ctx.layout.editorOpen` exposes the stored open preference.
+     */
+    'shell.editor': { kind: 'single'; scope: 'root'; owner: EditorOwnerProps }
+    /**
      * Frame-wide floating layer, above every column and outside their scroll
      * containers. Deliberately generic and unowned by any feature: a badge, a
      * toast stack or a status pill all belong here, and entries order among
@@ -104,17 +114,28 @@ export interface ConvOwnerProps {}
 /** Details owner share: empty — sessionId arrives as a framework-standard prop. */
 export interface DetailsOwnerProps {}
 
+/** Editor owner share: rendered column state after responsive concessions. */
+export interface EditorOwnerProps {
+  /** True when the editor column renders at zero width. */
+  collapsed: boolean
+  /** True when the editor owns the content region and the conversation is inert. */
+  exclusive: boolean
+  /** Rendered editor width in px, which may differ from the stored preference. */
+  width: number
+}
+
 /** Required services (cordis fiber inject — the loader passes all module exports as an object plugin). */
 export const inject = ['slots', 'theme']
 
 /**
  * Client plugin body: provide ctx.layout, then one register() call — AppFrame
- * into 'root' with the four child-slot declarations, the layout store seat,
+ * into 'root' with the five child-slot declarations, the layout store seat,
  * and the inject hook that hands the store's bound actions to the service.
  * @param ctx - client root context.
  */
 export function apply(ctx: ClientContext): void {
-  const layout = new LayoutController()
+  const store = createLayoutStoreBridge()
+  const layout = new LayoutController(store.editorOpen)
   ctx.effect(() => {
     const disposeService = ctx.reflect.provide('layout', layout)
     const disposeRegistration = ctx.slots.register({
@@ -123,11 +144,12 @@ export function apply(ctx: ClientContext): void {
         'sidebar': { kind: 'single', scope: 'root' },
         'conversation': { kind: 'single', scope: 'session-maybe' },
         'details': { kind: 'single', scope: 'session' },
+        'shell.editor': { kind: 'single', scope: 'root' },
         'shell.overlay': { kind: 'list', scope: 'root' },
       },
-      // Exclusive store: the factory itself — the framework instantiates per
-      // entry and delivers useStore/actions to AppFrame as standard props.
-      store: createLayoutStore,
+      // One apply-scoped handle lets AppFrame and ctx.layout observe the same
+      // root instance without creating a module-cache singleton.
+      store: store.handle,
       // The hook's only side effect connects the root store to ctx.layout;
       // conversation business actions belong to their registrants.
       inject: (actions: PanelActions) => {

@@ -1,17 +1,20 @@
 .surface {
-  position: absolute;
-  inset: 0;
   display: flex;
   flex-direction: column;
+  width: 100%;
+  height: 100%;
   min-width: 0;
   min-height: 0;
+  box-sizing: border-box;
+  overflow: hidden;
   background: var(--dsw-alias-bg-base);
   color: var(--dsw-alias-label-primary);
-  pointer-events: auto;
+  container-type: inline-size;
 }
 
-.hidden {
-  display: none;
+.surface.hidden {
+  pointer-events: none;
+  visibility: hidden;
 }
 
 .header {
@@ -357,7 +360,7 @@
   white-space: pre;
 }
 
-@media (max-width: 720px) {
+@container (max-width: 720px) {
   .body {
     grid-template-columns: 180px minmax(0, 1fr);
   }

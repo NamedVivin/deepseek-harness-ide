@@ -1,4 +1,4 @@
-/** Root-scoped IDE store declaration, shared by the overlay and footer action. */
+/** Root-scoped IDE store declaration shared by the editor pane and file opener. */
 
 import {
   defineStore,
@@ -17,9 +17,8 @@ type IdeActions = {
 }
 
 /**
- * Create one IDE store handle. `apply` creates it once and gives the same
- * handle to both root registrations.
- * @returns shared root store declaration.
+ * Create the IDE pane's root store handle.
+ * @returns root store declaration.
  */
 export function createIdeStore(): EngineStoreHandle<IdeState, IdeActions> {
   return defineStore({

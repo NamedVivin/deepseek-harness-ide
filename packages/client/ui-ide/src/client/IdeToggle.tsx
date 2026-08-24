@@ -1,30 +1,42 @@
-/** Sidebar footer action that toggles the shared IDE root store. */
+/** Conversation-header action that opens the layout-owned editor column. */
 
+import type { ObservableSnapshot } from '@deepseek-ai/dsh-client-runtime/client'
 import { IconCodeOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { PropsLocale, PropsRuntime, PropsStore } from '@deepseek-ai/dsh-client-ui-slots'
-import type { createIdeStore } from './store.ts'
+import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import css from './IdeToggle.module.css'
 
-/** Props composed from the sidebar owner, shared store, and IDE dictionary. */
+/** Registration-side layout face for the editor action. */
+export interface IdeToggleInjected {
+  hooks: {
+    /** Layout open state bound by the renderer as useEditorOpen. */
+    editorOpen: ObservableSnapshot<boolean>
+  }
+  /** Open the layout-owned editor column. */
+  openEditor: () => void
+}
+
+/** Props composed from the header owner, layout face, and IDE dictionary. */
 export type IdeToggleProps =
-  PropsRuntime<'sidebar.footer.action'>
-  & PropsStore<ReturnType<typeof createIdeStore>>
+  PropsRuntime<'conversation.header.utilities'>
+  & InjectFace<IdeToggleInjected>
   & PropsLocale<'ide'>
 
-/** Render the wide-row or compact-rail editor toggle. */
-export function IdeToggle({ wide, useStore, actions, t }: IdeToggleProps) {
-  const visible = useStore(state => state.visible)
+/** Render the conversation-header editor toggle. */
+export function IdeToggle({ useEditorOpen, openEditor, t }: IdeToggleProps) {
+  const editorOpen = useEditorOpen(value => value)
   return (
     <button
+      id="dsh-ide-toggle"
       type="button"
       className={css.button}
-      aria-label={visible ? t('action.close') : t('action.open')}
-      aria-expanded={visible}
-      title={wide ? undefined : t('action.open')}
-      onClick={() => { actions.dispatch({ type: 'toggle-visible' }) }}
+      aria-label={t('action.open')}
+      aria-controls="dsh-ide-surface"
+      aria-expanded={editorOpen}
+      title={t('action.open')}
+      disabled={editorOpen}
+      onClick={openEditor}
     >
       <IconCodeOutline16 />
-      {wide && <span>{t('action.open')}</span>}
     </button>
   )
 }

@@ -125,17 +125,14 @@ async function screen(page: Page, name: string): Promise<void> {
   await page.screenshot({ path: join(REPO_ROOT, '.artifacts', `w5-${name}.png`) })
 }
 
-/** First column track (px string) of the frame grid. */
-async function firstTrack(page: Page): Promise<string> {
-  return (await page.locator('[class*="frame"]').evaluate(
-    el => getComputedStyle(el).gridTemplateColumns)).split(' ')[0]!
+/** Rendered sidebar-panel width in CSS pixels. */
+async function sidebarWidth(page: Page): Promise<number> {
+  return page.locator('[data-shell-panel="sidebar"]').evaluate(element => element.getBoundingClientRect().width)
 }
 
-/** Last column track (details) as a number of pixels. */
-async function detailsTrack(page: Page): Promise<number> {
-  const cols = await page.locator('[class*="frame"]').evaluate(
-    el => getComputedStyle(el).gridTemplateColumns)
-  return Number(cols.split(' ').pop()!.replace('px', ''))
+/** Rendered details-panel width in CSS pixels. */
+async function detailsWidth(page: Page): Promise<number> {
+  return page.locator('[data-shell-panel="details"]').evaluate(element => element.getBoundingClientRect().width)
 }
 
 // Readiness gate: `dsh web` serves every production manifest plugin; until every UI
@@ -523,12 +520,16 @@ describe.skipIf(!process.env.DEEPSEEK_API_KEY || notReady.length > 0)('web smoke
     if (sessionsDir !== undefined) rmSync(sessionsDir, { recursive: true, force: true })
   })
 
-  it('cold start: loading page settles into the three-column frame', async () => {
+  it('cold start: loading page settles into the named shell panels', async () => {
     onTestFailed(() => saveFailureShot(page, 'w5-cold-start'))
-    await page.waitForSelector('[class*="frame"]', { timeout: 30_000 })
+    const frame = page.locator('[data-shell-frame]')
+    await frame.waitFor({ timeout: 30_000 })
     expect(await page.locator('text=Failed to load plugins').count()).toBe(0)
-    const template = await page.locator('[class*="frame"]').evaluate(el => getComputedStyle(el).gridTemplateColumns)
-    expect(template.split(' ').length).toBe(3)
+    expect(await frame.locator('[data-shell-panel]').evaluateAll(panels =>
+      panels.map(panel => panel.getAttribute('data-shell-panel'))))
+      .toEqual(['sidebar', 'conversation', 'details', 'editor'])
+    expect(await frame.locator('[data-shell-panel="editor"]')
+      .evaluate(element => element.getBoundingClientRect().width)).toBe(0)
     await screen(page, '01-cold-start')
   })
 
@@ -601,29 +602,29 @@ describe.skipIf(!process.env.DEEPSEEK_API_KEY || notReady.length > 0)('web smoke
     const toolRow = page.locator('[data-sample="bash"]')
     await toolRow.waitFor({ timeout: 120_000 })
     await screen(page, '08-bash-round')
-    expect(await detailsTrack(page)).toBe(0)
+    expect(await detailsWidth(page)).toBe(0)
     await toolRow.click()
     // Tool rows do not drive layout.openDetails; the default column stays closed.
-    expect(await detailsTrack(page)).toBe(0)
+    expect(await detailsWidth(page)).toBe(0)
     await screen(page, '09-details-closed')
   }, 150_000)
 
   it('sidebar drag widens the column and resets across reload', async () => {
     onTestFailed(() => saveFailureShot(page, 'w5-drag'))
-    const before = await firstTrack(page)
-    const handle = page.locator('[class*="handle"]').first()
+    const before = await sidebarWidth(page)
+    const handle = page.locator('[data-side="sidebar"]')
     const box = await handle.boundingBox()
     expect(box).not.toBeNull()
     await page.mouse.move(box!.x + box!.width / 2, box!.y + 300)
     await page.mouse.down()
     await page.mouse.move(box!.x + 70, box!.y + 300, { steps: 6 })
     await page.mouse.up()
-    const after = await firstTrack(page)
+    const after = await sidebarWidth(page)
     expect(after).not.toBe(before)
     await screen(page, '10-sidebar-dragged')
     await page.reload({ waitUntil: 'load' })
-    await page.waitForSelector('[class*="frame"]', { timeout: 30_000 })
-    expect(await firstTrack(page)).toBe(before)
+    await page.locator('[data-shell-frame]').waitFor({ timeout: 30_000 })
+    expect(await sidebarWidth(page)).toBe(before)
   })
 
   it('dark mode: the body attribute cascades the token sheets', async () => {
@@ -646,7 +647,7 @@ describe.skipIf(!process.env.DEEPSEEK_API_KEY || notReady.length > 0)('web smoke
   it('reload recovery: history replays after a fresh boot', async () => {
     onTestFailed(() => saveFailureShot(page, 'w5-reload'))
     await page.reload({ waitUntil: 'load' })
-    await page.waitForSelector('[class*="frame"]', { timeout: 30_000 })
+    await page.locator('[data-shell-frame]').waitFor({ timeout: 30_000 })
     await page.locator('p').filter({ hasText: ROUND_DONE_MARKER }).waitFor({ timeout: 30_000 })
     await screen(page, '12-reload-recovery')
   })

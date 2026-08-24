@@ -1,4 +1,4 @@
-/** IDE Client plugin: shared-store overlay, footer action, and workspace-file Remote face. */
+/** IDE Client plugin: docked editor pane, header action, and workspace-file Remote face. */
 
 import type {
   WorkspaceFilesListRequest,
@@ -13,16 +13,15 @@ import type {} from '@deepseek-ai/dsh-api-remotes/client'
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
-import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
-import { IdeSurface, type IdeFilesInjected } from './IdeSurface.tsx'
-import { IdeToggle } from './IdeToggle.tsx'
+import { IdeSurface, type IdeFilesInjected, type IdeSurfaceInjected } from './IdeSurface.tsx'
+import { IdeToggle, type IdeToggleInjected } from './IdeToggle.tsx'
 import { en, zh, type IdeLocaleKey } from './locales.ts'
 import { createIdeStoreBridge } from './store.ts'
 
 export { createIdeStore } from './store.ts'
-export type { IdeFilesInjected, IdeSurfaceProps } from './IdeSurface.tsx'
-export type { IdeToggleProps } from './IdeToggle.tsx'
+export type { IdeFilesInjected, IdeSurfaceInjected, IdeSurfaceProps } from './IdeSurface.tsx'
+export type { IdeToggleInjected, IdeToggleProps } from './IdeToggle.tsx'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
@@ -35,14 +34,14 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 const NS = 'ide'
 
 /** Required slot, Remote, workspace, file-opener, and locale services. */
-export const inject = ['slots', 'remote', 'remote.workspaceFiles', 'locale', 'workspaces', 'fileOpener']
+export const inject = ['slots', 'remote', 'remote.workspaceFiles', 'locale', 'workspaces', 'fileOpener', 'layout']
 
 function transportFailure(method: string, error: { code: string; message: string }): Error {
   return new Error(`workspaceFiles.${method} failed: ${error.code}: ${error.message}`)
 }
 
 /**
- * Register the frame overlay and sidebar action against one shared root store handle.
+ * Register the docked editor pane, header action, and file-opening route.
  * @param ctx - Client root carrying the generated workspace-file Remote.
  */
 export function apply(ctx: ClientContext): void {
@@ -74,11 +73,17 @@ export function apply(ctx: ClientContext): void {
     if (!result.ok) throw transportFailure('save', result.error)
     return result.value
   }
-  const files = (): IdeFilesInjected => ({
+  const surface = (): IdeSurfaceInjected => ({
     listFiles,
     readFile,
     saveFile,
     getIdeSnapshot: storeBridge.getSnapshot,
+    openEditor: () => { ctx.layout.openEditor() },
+    closeEditor: () => { ctx.layout.closeEditor() },
+  })
+  const toggle = (): IdeToggleInjected => ({
+    hooks: { editorOpen: ctx.layout.editorOpen },
+    openEditor: () => { ctx.layout.openEditor() },
   })
 
   ctx.fileOpener.register(async ({ sessionId, location }) => {
@@ -98,23 +103,24 @@ export function apply(ctx: ClientContext): void {
       segments: resolved.value.segments,
       ...(resolved.value.line === undefined ? {} : { line: resolved.value.line }),
     })
+    ctx.layout.openEditor()
     return 'handled'
   })
 
-  ctx.slots.inject('shell.overlay', () => ctx.slots.register({
-    name: 'shell.overlay',
-    id: 'ide',
-    order: 10,
+  ctx.slots.inject('shell.editor', () => ctx.slots.register({
+    name: 'shell.editor',
     locale: NS,
     store,
-    inject: files,
+    inject: surface,
   }, IdeSurface))
 
-  ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register({
-    name: 'sidebar.footer.action',
+  ctx.slots.inject('conversation.header.utilities', () => ctx.slots.register({
+    name: 'conversation.header.utilities',
     id: 'ide',
     order: 10,
     locale: NS,
-    store,
+    inject: toggle,
   }, IdeToggle))
+
+  ctx.effect(() => () => { ctx.layout.closeEditor() }, 'ui-ide: close editor column on unload')
 }
