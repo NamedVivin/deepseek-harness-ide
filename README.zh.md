@@ -2,7 +2,9 @@
 
 [English](README.md) | 中文
 
-DeepSeek Harness（`dsh`）是由 [DeepSeek AI](https://deepseek.com) 开发的开源 agent harness（智能体框架）。
+![DeepSeek Harness 插件架构与集成 Workspace IDE](.github/assets/readme/deepseek-harness-hero.png)
+
+DeepSeek Harness（`dsh`）是由 [DeepSeek AI](https://deepseek.com) 开发的开源、插件化 agent harness（智能体框架）。内置 Workspace IDE 把 agent 会话、仓库浏览和文件编辑集中在同一个应用中。
 
 它采用**一切皆插件**的架构，并由 [Cordis](https://github.com/cordiverse/cordis) 驱动，其设计参见论文 [_A Programming Paradigm for Spatiotemporal Composability_](https://github.com/cordiverse/paper)。
 
@@ -12,7 +14,11 @@ DeepSeek Harness 目前处于 _开发者预览_ 阶段，正在快速迭代。**
 
 ## 集成 IDE
 
-`ide` profile 在 agent 会话旁提供 Workspace 文件树和 CodeMirror 编辑器。它可以把 Agent 产出的受支持文件位置打开到已校验行，使用常见语言的语法高亮编辑已有普通 UTF-8 文件，从当前未保存 buffer 预览 Markdown，并通过版本校验保存，在发生冲突后同时保留本地 buffer 与最新磁盘内容。宽屏显示带可拖动分隔条的会话与编辑器并排面板；窄屏由编辑器占用内容区。详见 [IDE 行为与限制](packages/client/ui-ide/README.zh.md)。
+你可以从 Workspace 文件树打开文件，也可以直接跳转到 agent 返回的受支持文件位置。在 CodeMirror 的多标签页工作区中使用常见语言的语法高亮编辑已有普通 UTF-8 文件，并直接预览当前未保存 buffer 中的 Markdown。宽屏通过可拖动分隔条并排显示会话与 IDE；窄屏则由 IDE 占用内容区。
+
+![DeepSeek Harness 集成 IDE，包含 agent 会话、Workspace 文件树和 CodeMirror 编辑器](.github/assets/readme/ide-workspace.png)
+
+保存操作会校验版本。如果文件在磁盘上发生变化，IDE 会同时保留你的本地 buffer 和最新磁盘内容，由你选择恢复方式，而不会静默覆盖任一版本。确切功能范围见 [IDE 行为与限制](packages/client/ui-ide/README.zh.md)。
 
 从源码 checkout 使用时，请先构建一次，再启动 IDE：
 

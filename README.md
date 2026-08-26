@@ -2,7 +2,9 @@
 
 English | [中文](README.zh.md)
 
-DeepSeek Harness (`dsh`) is an open-source agent harness developed by [DeepSeek AI](https://deepseek.com).
+![DeepSeek Harness plugin architecture and integrated Workspace IDE](.github/assets/readme/deepseek-harness-hero.png)
+
+DeepSeek Harness (`dsh`) is an open-source, plugin-based agent harness developed by [DeepSeek AI](https://deepseek.com). Its integrated Workspace IDE keeps agent conversations, repository browsing, and file editing in one application.
 
 It uses an architecture where **everything is a plugin**, and is powered by [Cordis](https://github.com/cordiverse/cordis), whose design is described in [_A Programming Paradigm for Spatiotemporal Composability_](https://github.com/cordiverse/paper).
 
@@ -12,7 +14,11 @@ DeepSeek Harness is currently in _developer preview_ and is iterating rapidly. *
 
 ## Integrated IDE
 
-The `ide` profile adds a Workspace file tree and CodeMirror editor beside the agent conversation. It opens supported Agent-produced file locations at the validated line, edits existing regular UTF-8 files with common language highlighting, previews Markdown from the current unsaved buffer, and uses version-checked saves that preserve both the local buffer and latest disk content after a conflict. Wide screens show adjacent conversation and editor panes with a draggable divider; narrow screens give the editor the content area. See [IDE behavior and limitations](packages/client/ui-ide/README.md).
+Open files from the Workspace tree or jump directly to supported locations returned by the agent. Edit existing regular UTF-8 files in a tabbed CodeMirror workspace with common language highlighting, and preview Markdown from the current unsaved buffer. Wide screens keep the conversation and IDE side by side with a draggable divider; narrow screens give the IDE the content area.
+
+![DeepSeek Harness integrated IDE with an agent conversation, Workspace file tree, and CodeMirror editor](.github/assets/readme/ide-workspace.png)
+
+Saves use version checks. If a file changes on disk, the IDE preserves both your local buffer and the latest disk content so you can choose how to recover rather than silently overwrite either version. See [IDE behavior and limitations](packages/client/ui-ide/README.md) for the exact scope.
 
 From a source checkout, build once and start the IDE with:
 
