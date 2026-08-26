@@ -1,65 +1,58 @@
-# DeepSeek Harness
+# DeepSeek Harness IDE
 
 English | [中文](README.zh.md)
 
 ![DeepSeek Harness plugin architecture and integrated Workspace IDE](.github/assets/readme/deepseek-harness-hero.png)
 
-DeepSeek Harness (`dsh`) is an open-source, plugin-based agent harness developed by [DeepSeek AI](https://deepseek.com). Its integrated Workspace IDE keeps agent conversations, repository browsing, and file editing in one application.
+DeepSeek Harness IDE is an independently maintained community derivative of [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness). It adds an integrated Workspace IDE that keeps agent conversations, repository browsing, and file editing in one application.
 
-It uses an architecture where **everything is a plugin**, and is powered by [Cordis](https://github.com/cordiverse/cordis), whose design is described in [_A Programming Paradigm for Spatiotemporal Composability_](https://github.com/cordiverse/paper).
+**Important:** This is not the official DeepSeek Harness repository. The current source is based on upstream [`dsh-v0.1.1-rc.2`](https://github.com/deepseek-ai/deepseek-harness/tree/dsh-v0.1.1-rc.2) and retains its MIT license and attribution.
+
+Upstream DeepSeek Harness is developed by [DeepSeek AI](https://deepseek.com). It uses an architecture where **everything is a plugin** and is powered by [Cordis](https://github.com/cordiverse/cordis), whose design is described in [_A Programming Paradigm for Spatiotemporal Composability_](https://github.com/cordiverse/paper).
 
 ## Developer preview
 
-DeepSeek Harness is currently in _developer preview_ and is iterating rapidly. **THERE WILL BE COMPATIBILITY-BREAKING CHANGES.**
+This community derivative is currently a source-only _developer preview_ and is iterating rapidly. **THERE WILL BE COMPATIBILITY-BREAKING CHANGES.**
 
-## Integrated IDE
+## What this repository adds
 
-Open files from the Workspace tree or jump directly to supported locations returned by the agent. Edit existing regular UTF-8 files in a tabbed CodeMirror workspace with common language highlighting, and preview Markdown from the current unsaved buffer. Wide screens keep the conversation and IDE side by side with a draggable divider; narrow screens give the IDE the content area.
+| Capability | Behavior in this repository |
+|---|---|
+| Workspace IDE | When space permits, a file tree and multi-tab CodeMirror editor share an adjustable split with the agent conversation. At 900px or narrower, the editor takes the content area beside the navigation rail. |
+| Agent-to-file navigation | Supported file links from tool cards and produced-file results open a validated text file. An optional line location focuses the requested line. |
+| Markdown preview | Markdown tabs preview the current unsaved buffer through the existing sanitized renderer. |
+| Conflict-safe saves | Version-checked compare-and-swap saves preserve the local buffer after a concurrent change and display the latest disk content for explicit recovery. There is no unconditional overwrite action. |
 
 ![DeepSeek Harness integrated IDE with an agent conversation, Workspace file tree, and CodeMirror editor](.github/assets/readme/ide-workspace.png)
 
-Saves use version checks. If a file changes on disk, the IDE preserves both your local buffer and the latest disk content so you can choose how to recover rather than silently overwrite either version. See [IDE behavior and limitations](packages/client/ui-ide/README.md) for the exact scope.
+The first release edits existing regular UTF-8 files only; it does not create, rename, move, delete, watch, or globally search files. Unsaved buffers are transient and may be lost after a page reload or process crash. See [IDE behavior and limitations](packages/client/ui-ide/README.md) for the complete scope.
 
-From a source checkout, build once and start the IDE with:
+<a id="run"></a><a id="run-from-source"></a>
+
+## Run this IDE from source
+
+Install Node.js `^22.19.0` or `>=24.0.0` and enable Corepack, then build this repository and start its `ide` profile:
 
 ```sh
+git clone https://github.com/NamedVivin/deepseek-harness-ide.git
+cd deepseek-harness-ide
+corepack enable
+pnpm install
 pnpm run build
 pnpm dsh --profile ide
 ```
 
-The packaged Electron application bundles its own Node.js runtime and opens no TCP listener. Signed installers are not published yet; local unsigned packages are development artifacts. See the [desktop application documentation](apps/desktop/README.md).
+The published `@deepseek-ai/dsh` npm package belongs to the upstream project and does not contain this repository's IDE changes. Configure a supported model and credential after startup as described in the [Web UI guide](docs/user/guide/index.md).
 
-## Run
+### Desktop packaging
 
-### Run from `npm`
-
-Install `Node.js`, then run:
-
-```sh
-npx @deepseek-ai/dsh web
-```
-
-The command starts the Web UI at `http://127.0.0.1:3080` by default and opens it in the default browser for a local launch. An SSH launch only prints the host URL because the SSH client or editor owns the local forwarded address. Pass `--no-open` to run the server without opening a browser. See [Web UI guide](docs/user/guide/index.md).
-
-### Run from source
-
-To run from a repository checkout:
-
-```sh
-git clone https://github.com/deepseek-ai/deepseek-harness.git
-cd deepseek-harness
-pnpm install
-pnpm run build
-pnpm dsh web
-```
-
-`pnpm run build` prepares the repository artifacts. `pnpm dsh web` uses those built artifacts without rebuilding.
+The Electron application source is included and opens no TCP listener. Signed installers are not published; local unsigned packages remain development artifacts. Follow the [desktop application documentation](apps/desktop/README.md) to build them locally.
 
 ## Community and support
 
-- Feel free to submit feedback or bug reports through [GitHub Discussions](https://github.com/deepseek-ai/deepseek-harness/discussions).
-- Add the [`dsh-plugin`](https://github.com/topics/dsh-plugin) topic to your plugin repository for discoverability.
-- Join <a href="https://discord.gg/Ycq5dCaS4">DeepSeek Harness Discord community</a>.
+- Report IDE-specific bugs and suggestions through this repository's [GitHub Issues](https://github.com/NamedVivin/deepseek-harness-ide/issues).
+- Use the [upstream Discussions](https://github.com/deepseek-ai/deepseek-harness/discussions) for questions about the official DeepSeek Harness distribution.
+- Join the <a href="https://discord.gg/Ycq5dCaS4">upstream DeepSeek Harness Discord community</a>.
 
 ## Contributing
 
