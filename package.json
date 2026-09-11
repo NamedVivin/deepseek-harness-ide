@@ -214,7 +214,7 @@
     "oxlint": "1.76.0",
     "oxlint-tsgolint": "7.0.2001",
     "publint": "^0.3.21",
-    "smol-toml": "^1.7.1",
+    "smol-toml": "^1.8.0",
     "spdx-expression-parse": "^5.0.0",
     "tsdown": "^0.22.2",
     "tsx": "^4.22.4",
