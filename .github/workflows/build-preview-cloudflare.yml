@@ -1,17 +1,13 @@
 name: Build PR preview
 
-# Every push to a pull request publishes that pull request's preview to
-# Cloudflare Pages under its own branch alias, behind Cloudflare Access. The
-# upload carries build products only: the workflow never grants the deployment
-# platform access to this repository's sources.
+# A manually dispatched run publishes a preview to Cloudflare Pages under its
+# branch alias, behind Cloudflare Access. The upload carries build products
+# only: the workflow never grants the deployment platform access to sources.
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened]
+  workflow_dispatch:
 
-# Within one pull request the newest build wins. Across pull requests there is
-# nothing to serialize: each uploads to its own branch alias, so two deployments
-# never contend for the same URL.
+# A manually dispatched run replaces an older run for the same ref.
 concurrency:
   group: build-preview-cloudflare-${{ github.event.pull_request.number }}
   cancel-in-progress: true

@@ -1,8 +1,6 @@
 name: CI master
 
 on:
-  push:
-    branches: [master]
   workflow_dispatch:
     inputs:
       suite:
