@@ -1,0 +1,14 @@
+# IDE capabilities layered over dsh-base and dsh-web-app. The bundle does not
+# select a transport; the source `ide` profile receives the Web carrier from
+# dsh-web-app, while the packaged desktop composition will replace it.
+
+- insert:
+    - id: workspace-files
+      name: '@deepseek-ai/dsh-api-workspace-files'
+      config:
+        maxTextFileBytes: 10485760
+        maxDirectoryEntries: 10000
+
+    # Root-scoped workspace editor over the generated workspaceFiles Remote.
+    - id: ui-ide
+      name: '@deepseek-ai/dsh-client-ui-ide'
