@@ -4,9 +4,7 @@
 
 ![DeepSeek Harness 插件架构与集成 Workspace IDE](.github/assets/readme/deepseek-harness-hero.png)
 
-DeepSeek Harness IDE 是基于 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的独立维护社区衍生版。它新增集成式 Workspace IDE，把 agent（智能体）会话、仓库浏览和文件编辑集中在同一个应用中。
-
-**重要：** 本仓库并非 DeepSeek Harness 官方仓库。当前源码基于上游 [`dsh-v0.1.1-rc.2`](https://github.com/deepseek-ai/deepseek-harness/tree/dsh-v0.1.1-rc.2)，并保留其 MIT 许可证与归属信息。
+DeepSeek Harness IDE 是 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的独立维护衍生版。本仓库跟随上游更新，并加入集成式 Workspace IDE，将 agent（智能体）会话、仓库浏览和文件编辑集中在同一个应用中，同时保留上游的 MIT 许可证与归属信息。
 
 上游 DeepSeek Harness 由 [DeepSeek AI](https://deepseek.com) 开发。它采用**一切皆插件**的架构，并由 [Cordis](https://github.com/cordiverse/cordis) 驱动，其设计参见论文 [_A Programming Paradigm for Spatiotemporal Composability_](https://github.com/cordiverse/paper)。
 

@@ -4,9 +4,7 @@ English | [中文](README.zh.md)
 
 ![DeepSeek Harness plugin architecture and integrated Workspace IDE](.github/assets/readme/deepseek-harness-hero.png)
 
-DeepSeek Harness IDE is an independently maintained community derivative of [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness). It adds an integrated Workspace IDE that keeps agent conversations, repository browsing, and file editing in one application.
-
-**Important:** This is not the official DeepSeek Harness repository. The current source is based on upstream [`dsh-v0.1.1-rc.2`](https://github.com/deepseek-ai/deepseek-harness/tree/dsh-v0.1.1-rc.2) and retains its MIT license and attribution.
+DeepSeek Harness IDE is an independently maintained derivative of [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness). This repository tracks upstream changes and adds an integrated Workspace IDE that keeps agent conversations, repository browsing, and file editing in one application. It preserves the upstream MIT license and attribution.
 
 Upstream DeepSeek Harness is developed by [DeepSeek AI](https://deepseek.com). It uses an architecture where **everything is a plugin** and is powered by [Cordis](https://github.com/cordiverse/cordis), whose design is described in [_A Programming Paradigm for Spatiotemporal Composability_](https://github.com/cordiverse/paper).
 
