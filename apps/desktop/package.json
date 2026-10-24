@@ -33,7 +33,7 @@
     "semver": "^7.8.5"
   },
   "devDependencies": {
-    "@aws-sdk/client-s3": "3.1067.0",
+    "@aws-sdk/client-s3": "3.1109.0",
     "@deepseek-ai/dsh-home-paths": "workspace:^",
     "@electron/notarize": "2.5.0",
     "@types/js-yaml": "^4.0.9",
